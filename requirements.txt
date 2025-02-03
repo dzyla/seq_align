@@ -1,0 +1,7 @@
+streamlit
+biopython
+numpy
+plotly
+matplotlib
+pyfamsa
+typing-extensions
