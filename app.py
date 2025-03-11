@@ -18,6 +18,7 @@ from matplotlib.colors import ListedColormap
 import matplotlib.patches as mpatches
 import os
 import pandas as pd
+import tempfile
 
 # Import pyFAMSA
 from pyfamsa import Aligner as PyFAMSAAligner, Sequence as PyFAMSASequence
@@ -26,13 +27,6 @@ from pyfamsa import Aligner as PyFAMSAAligner, Sequence as PyFAMSASequence
 def msa_to_image(alignment_text: str, format: str) -> tuple:
     """
     Converts Multiple Sequence Alignment (MSA) to numerical image data and amino acid array.
-    Args:
-        alignment_text (str): MSA result as a string.
-        format (str): Format of the MSA (e.g., "fasta", "clustal").
-    Returns:
-        tuple: (msa_image as numpy.ndarray, msa_letters as numpy.ndarray)
-    Raises:
-        Exception: If any error occurs during conversion.
     """
     try:
         alignment = AlignIO.read(StringIO(alignment_text), format)
@@ -41,32 +35,9 @@ def msa_to_image(alignment_text: str, format: str) -> tuple:
         raise e
 
     AA_CODES = {
-        "-": 0,
-        "A": 1,
-        "C": 2,
-        "D": 3,
-        "E": 4,
-        "F": 5,
-        "G": 6,
-        "H": 7,
-        "I": 8,
-        "K": 9,
-        "L": 10,
-        "M": 11,
-        "N": 12,
-        "P": 13,
-        "Q": 14,
-        "R": 15,
-        "S": 16,
-        "T": 17,
-        "V": 18,
-        "W": 19,
-        "Y": 20,
-        "X": 21,
-        "B": 22,
-        "J": 23,
-        "O": 24,
-        "Z": 25,
+        "-": 0, "A": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6, "H": 7, "I": 8, "K": 9, "L": 10,
+        "M": 11, "N": 12, "P": 13, "Q": 14, "R": 15, "S": 16, "T": 17, "V": 18, "W": 19, "Y": 20,
+        "X": 21, "B": 22, "J": 23, "O": 24, "Z": 25,
     }
 
     msa_image = np.zeros((len(alignment), alignment.get_alignment_length()), dtype=int)
@@ -84,11 +55,6 @@ def msa_to_image(alignment_text: str, format: str) -> tuple:
 def plot_msa_image(msa_image: np.ndarray, msa_letters: np.ndarray, plot_method: str):
     """
     Plots the Multiple Sequence Alignment (MSA) as a heatmap.
-    Offers two plotting methods: Plotly (interactive) and Matplotlib (static and faster for large MSAs).
-    Args:
-        msa_image (numpy.ndarray): Numerical representation of MSA.
-        msa_letters (numpy.ndarray): Array of amino acid letters.
-        plot_method (str): The plotting method selected by the user.
     """
     if msa_image is None or msa_letters is None:
         st.error("No MSA image data to plot.")
@@ -109,9 +75,6 @@ def plot_msa_image(msa_image: np.ndarray, msa_letters: np.ndarray, plot_method: 
 def plot_msa_image_plotly(msa_image: np.ndarray, msa_letters: np.ndarray):
     """
     Plots the MSA as an interactive heatmap using Plotly.
-    Args:
-        msa_image (numpy.ndarray): Numerical representation of MSA.
-        msa_letters (numpy.ndarray): Array of amino acid letters.
     """
     msa_image_list = msa_image.tolist()
     msa_letters_list = msa_letters.tolist()
@@ -149,51 +112,20 @@ def plot_msa_image_plotly(msa_image: np.ndarray, msa_letters: np.ndarray):
 def plot_msa_image_matplotlib(msa_image: np.ndarray, msa_letters: np.ndarray):
     """
     Plots the MSA as a static heatmap using Matplotlib.
-    Args:
-        msa_image (numpy.ndarray): Numerical representation of MSA.
-        msa_letters (numpy.ndarray): Array of amino acid letters.
     """
     _plot_msa_image_matplotlib_subset(msa_image, msa_letters, 0, 0)
 
 
 CODE_TO_AA = {
-    0: "-",
-    1: "A",
-    2: "C",
-    3: "D",
-    4: "E",
-    5: "F",
-    6: "G",
-    7: "H",
-    8: "I",
-    9: "K",
-    10: "L",
-    11: "M",
-    12: "N",
-    13: "P",
-    14: "Q",
-    15: "R",
-    16: "S",
-    17: "T",
-    18: "V",
-    19: "W",
-    20: "Y",
-    21: "X",
-    22: "B",
-    23: "J",
-    24: "O",
-    25: "Z",
+    0: "-", 1: "A", 2: "C", 3: "D", 4: "E", 5: "F", 6: "G", 7: "H", 8: "I", 9: "K", 10: "L",
+    11: "M", 12: "N", 13: "P", 14: "Q", 15: "R", 16: "S", 17: "T", 18: "V", 19: "W", 20: "Y",
+    21: "X", 22: "B", 23: "J", 24: "O", 25: "Z",
 }
 
 
 def _plot_msa_image_matplotlib_subset(msa_image_subset: np.ndarray, msa_letters_subset: np.ndarray, seq_offset: int, res_offset: int):
     """
     Helper function to plot a subset of the MSA using Matplotlib.
-    Args:
-        msa_image_subset (numpy.ndarray): Numerical representation of MSA subset.
-        msa_letters_subset (numpy.ndarray): Array of amino acid letters subset.
-        seq_offset (int): Starting index of sequences.
-        res_offset (int): Starting index of residues.
     """
     fig, ax = plt.subplots(figsize=(20, 7))
     cax = ax.imshow(msa_image_subset, cmap='Spectral', aspect='auto', interpolation='nearest')
@@ -209,7 +141,7 @@ def _plot_msa_image_matplotlib_subset(msa_image_subset: np.ndarray, msa_letters_
         label = CODE_TO_AA.get(val, "?")
         handles.append(mpatches.Patch(color=cmap(val), label=label))
         labels.append(label)
-    
+
     ax.legend(handles=handles, labels=labels, title="Amino Acids", bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
     plt.tight_layout()
 
@@ -222,11 +154,11 @@ def _plot_msa_image_matplotlib_subset(msa_image_subset: np.ndarray, msa_letters_
 
 
 def main():
-    st.set_page_config(page_title="Advanced Sequence Alignment Tool", layout="wide")
-    st.title("🔬 Advanced Sequence Alignment and Format Conversion Tool")
+    st.set_page_config(page_title="Advanced Sequence Alignment Ability", layout="wide")
+    st.title("🔬 Advanced Sequence Alignment and Format Conversion Ability")
     st.write("""
     ### Welcome to the Advanced Sequence Alignment Tool!
-    This application allows you to perform **pairwise** and **multiple sequence alignments (MSA)** on **DNA** or **Protein** sequences. 
+    This application allows you to perform **pairwise** and **multiple sequence alignments (MSA)** on **DNA** or **Protein** sequences.
     You can choose between **Global**, **Local**, and **Overlap** alignments. Additionally, you can convert sequence files between various formats.
     For MSA, point mutations relative to a reference sequence are reported.
     **How to Use:**
@@ -271,7 +203,7 @@ def main():
             except Exception as e:
                 st.sidebar.error(f"Error parsing {input_format} file: {e}")
     elif input_format == "Newick":
-        uploaded_file = st.sidebar.file_uploader("Upload Newick Tree File", type=["nwk", "newick"])
+        uploaded_file = st.sidebar.file_uploader("Upload Newick Tree File", type=["nwk", "newick", "tree"])
         if uploaded_file:
             try:
                 tree = Phylo.read(uploaded_file, "newick")
@@ -334,13 +266,13 @@ def main():
 def get_file_extensions(format_name):
     """Return appropriate file extensions based on the selected format."""
     format_extensions = {
-        "FASTA": ["fasta", "fa", "fna", "ffn", "faa", "frn"],
-        "Clustal": ["clustal", "aln"],
-        "Phylip": ["phy"],
-        "EMBL": ["embl"],
-        "GenBank": ["gb", "genbank"],
-        "Newick": ["nwk", "newick"],
-        "PDB": ["pdb"],
+        "FASTA": ["fasta", "fa", "fna", "ffn", "faa", "frn", "fsa", "seq"],
+        "Clustal": ["clustal", "aln", "clw"],
+        "Phylip": ["phy", "ph", "phylip"],
+        "EMBL": ["embl", "ebl", "emb"],
+        "GenBank": ["gb", "gbk", "genbank"],
+        "Newick": ["nwk", "newick", "tree"],
+        "PDB": ["pdb", "ent"],
         "mmCIF": ["cif", "mmcif"]
     }
     return format_extensions.get(format_name, [])
@@ -349,10 +281,6 @@ def get_file_extensions(format_name):
 def parse_sequences_from_text(text):
     """
     Parse sequences from pasted text in FASTA format.
-    Args:
-        text (str): The raw text input containing FASTA-formatted sequences.
-    Returns:
-        tuple: sequences (list of SeqRecord) or None, error message if any.
     """
     try:
         normalized_text = text.replace('\r\n', '\n').replace('\r', '\n')
@@ -379,8 +307,6 @@ def parse_sequences_from_text(text):
 def parse_sequences_from_file(file, format_name):
     """
     Parse sequences from an uploaded file based on the selected format.
-    Returns:
-        tuple: sequences (list of SeqRecord) or None, error message if any.
     """
     try:
         if format_name.lower() == "newick":
@@ -399,51 +325,66 @@ def parse_sequences_from_file(file, format_name):
 def parse_sequences_from_structure(file, format_name):
     """
     Parse sequences from PDB or mmCIF structure files.
-    Args:
-        file: Uploaded file object.
-        format_name (str): "PDB" or "mmCIF".
-    Returns:
-        tuple: sequences (list of SeqRecord) or None, error message if any.
     """
     try:
         file.seek(0)
-        filename = file.name
-        file_basename = os.path.splitext(os.path.basename(filename))[0]
-        if format_name == "PDB":
-            parser = PDBParser(QUIET=True)
-            structure = parser.get_structure(file_basename, file)
-        elif format_name == "mmCIF":
-            parser = MMCIFParser(QUIET=True)
-            content = file.read().decode('utf-8')
-            structure = parser.get_structure(file_basename, StringIO(content))
-        else:
-            return None, f"Unsupported format: {format_name}"
-        ppb = PPBuilder()
-        sequences = []
-        for model in structure:
-            for chain in model:
-                seq_id = f"{file_basename}_{chain.id}"
-                sequence = ""
-                for pp in ppb.build_peptides(chain):
-                    sequence += str(pp.get_sequence())
-                if sequence:
-                    seq_record = SeqRecord(Seq(sequence), id=seq_id, description="")
-                    sequences.append(seq_record)
-        if not sequences:
-            return None, "No protein sequences found in the structure file."
-        return sequences, None
+        file_content = file.read()
+        file_basename = os.path.splitext(os.path.basename(file.name))[0]
+
+        # Use temporary files for reliable parsing
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{format_name.lower()}") as temp_file:
+            temp_file.write(file_content)
+            temp_filepath = temp_file.name
+
+        try:
+            if format_name == "PDB":
+                parser = PDBParser(QUIET=True)
+                structure = parser.get_structure(file_basename, temp_filepath)
+            elif format_name == "mmCIF":
+                parser = MMCIFParser(QUIET=True)
+                structure = parser.get_structure(file_basename, temp_filepath)
+            else:
+                return None, f"Unsupported format: {format_name}"
+
+            # Extract sequences using PPBuilder
+            ppb = PPBuilder()
+            sequences = []
+
+            for model in structure:
+                for chain in model:
+                    chain_id = chain.id
+                    if chain_id == " " or not list(chain.get_residues()):
+                        continue
+
+                    seq_id = f"{file_basename}_{chain_id}"
+                    peptides = list(ppb.build_peptides(chain))
+
+                    if peptides:
+                        sequence = "".join(str(pp.get_sequence()) for pp in peptides)
+                        if sequence:
+                            seq_record = SeqRecord(
+                                Seq(sequence),
+                                id=seq_id,
+                                description=f"Chain {chain_id} from {file.name}"
+                            )
+                            sequences.append(seq_record)
+
+            if not sequences:
+                return None, "No protein sequences found in the structure file."
+
+            return sequences, None
+        finally:
+            # Clean up
+            os.unlink(temp_filepath)
+
     except Exception as e:
-        return None, f"An error occurred while parsing the {format_name} file: {e}"
+        traceback.print_exc()  # For debugging
+        return None, f"An error occurred while parsing the {format_name} file: {str(e)}"
 
 
 def save_msa_to_fasta(msa: List[PyFAMSASequence], output_path: str) -> bool:
     """
     Converts pyFAMSA MSA output to a FASTA file compatible with Biopython.
-    Args:
-        msa (List[pyfamsa.Sequence]): The MSA result from pyFAMSA.
-        output_path (str): The file path where the FASTA file will be saved.
-    Returns:
-        bool: True if the file was saved successfully, False otherwise.
     """
     try:
         seq_records = []
@@ -463,10 +404,6 @@ def save_msa_to_fasta(msa: List[PyFAMSASequence], output_path: str) -> bool:
 def get_msa_as_fasta(msa: List[PyFAMSASequence]) -> str:
     """
     Converts pyFAMSA MSA output to a FASTA-formatted string compatible with Biopython.
-    Args:
-        msa (List[pyfamsa.Sequence]): The MSA result from pyFAMSA.
-    Returns:
-        str: FASTA-formatted string of the aligned sequences.
     """
     try:
         seq_records = []
@@ -655,13 +592,6 @@ def phylogenetic_tree_section(tree):
 def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-0.1):
     """
     Perform pairwise alignment using Biopython's Align.PairwiseAligner.
-    Parameters:
-        seq1 (SeqRecord): First sequence.
-        seq2 (SeqRecord): Second sequence.
-        seq_type (str): Type of sequences ('DNA' or 'Protein').
-        mode (str, optional): Alignment mode ('global', 'local', 'overlap'). Defaults to 'global'.
-    Returns:
-        tuple: alignment_text (str) and mutations (list)
     """
     try:
         aligner = Align.PairwiseAligner()
@@ -674,14 +604,20 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
         aligner.extend_gap_score = extend_gap_score
         alignments = aligner.align(seq1.seq, seq2.seq)
         alignment = next(alignments)
-        aligned_seq1, match_line, aligned_seq2 = reconstruct_aligned_sequences(
-            alignment[0],
-            alignment[1],
-            alignment.aligned,
-            aligner.substitution_matrix
-        )
-        mutations = report_mutations(aligned_seq1, aligned_seq2)
-        alignment_text = format_alignment_display(seq1.id, aligned_seq1, match_line, seq2.id, aligned_seq2, alignment.score)
+
+        # Get the alignment as strings with gaps
+        aligned_seq1_str = str(alignment[0])
+        aligned_seq2_str = str(alignment[1])
+
+        # Generate match line
+        match_line = generate_match_line(aligned_seq1_str, aligned_seq2_str, aligner.substitution_matrix)
+
+        # Report mutations
+        mutations = report_mutations(aligned_seq1_str, aligned_seq2_str)
+
+        # Format alignment display
+        alignment_text = format_alignment_display(seq1.id, aligned_seq1_str, match_line, seq2.id, aligned_seq2_str, alignment.score)
+
         return alignment_text, mutations
     except Exception as e:
         st.error(f"An error occurred during pairwise alignment: {e}")
@@ -689,39 +625,25 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
         return "Error during alignment.", []
 
 
-def reconstruct_aligned_sequences(seq1, seq2, alignment_blocks, substitution_matrix, threshold=1):
+def generate_match_line(aligned_seq1, aligned_seq2, substitution_matrix, threshold=1):
     """
-    Reconstruct the aligned sequences with gaps and generate a match line based on the alignment blocks.
-    Parameters:
-        seq1 (str): Original sequence 1.
-        seq2 (str): Original sequence 2.
-        alignment_blocks (list): List of alignment blocks.
-        substitution_matrix (SubstitutionMatrix): Substitution matrix used for alignment.
-        threshold (int, optional): Score threshold for similarity.
-    Returns:
-        tuple: (aligned_seq1_str, match_line_str, aligned_seq2_str)
+    Generate a match line for two aligned sequences.
     """
-    matched_positions = ''
-    for n, char in enumerate(str(seq1)):
-        if char == str(seq2)[n]:
-            matched_positions += "|"
-        elif are_similar(char, str(seq2)[n], substitution_matrix, threshold):
-            matched_positions += ":"
+    match_line = []
+    for a, b in zip(aligned_seq1, aligned_seq2):
+        if a == b and a != '-':
+            match_line.append('|')  # Identical
+        elif a != '-' and b != '-' and are_similar(a, b, substitution_matrix, threshold):
+            match_line.append(':')  # Similar
         else:
-            matched_positions += "#"
-    return seq1, matched_positions, seq2
+            match_line.append(' ')  # Different or gap
+
+    return ''.join(match_line)
 
 
 def are_similar(a, b, substitution_matrix, threshold=1):
     """
     Determine if two residues are similar based on the substitution matrix.
-    Parameters:
-        a (str): Residue from the first sequence.
-        b (str): Residue from the second sequence.
-        substitution_matrix (SubstitutionMatrix): Biopython substitution matrix.
-        threshold (int, optional): Score threshold.
-    Returns:
-        bool: True if residues are similar, False otherwise.
     """
     try:
         if a == '-' or b == '-':
@@ -735,16 +657,6 @@ def are_similar(a, b, substitution_matrix, threshold=1):
 def format_alignment_display(id1, aligned1, match_line, id2, aligned2, score, interval=10):
     """
     Create a formatted string for alignment display, including match lines and location markers.
-    Parameters:
-        id1 (str): Identifier of the first sequence.
-        aligned1 (str): Aligned sequence 1 with gaps.
-        match_line (str): Match line indicating matches/mismatches.
-        id2 (str): Identifier of the second sequence.
-        aligned2 (str): Aligned sequence 2 with gaps.
-        score (float): Alignment score.
-        interval (int): Interval at which to place location numbers.
-    Returns:
-        str: Formatted alignment string.
     """
     def generate_location_line(aligned_seq, interval=10):
         location = [' '] * len(aligned_seq)
@@ -790,11 +702,6 @@ def format_alignment_display(id1, aligned1, match_line, id2, aligned2, score, in
 def report_mutations(aligned1, aligned2):
     """
     Report point mutations between two aligned sequences in the format 'S18I'.
-    Parameters:
-        aligned1 (str): Aligned reference sequence with gaps.
-        aligned2 (str): Aligned target sequence with gaps.
-    Returns:
-        list: List of formatted point mutations.
     """
     mutations = []
     position = 0
@@ -809,14 +716,6 @@ def report_mutations(aligned1, aligned2):
 def perform_msa(sequences, reference_id, seq_type, output_format):
     """
     Perform Multiple Sequence Alignment using pyFAMSA and report mutations relative to the reference sequence.
-    Parameters:
-        sequences (list of SeqRecord): List of sequences to align.
-        reference_id (str): ID of the reference sequence.
-        seq_type (str): Type of sequences ('DNA' or 'Protein').
-        output_format (str): Desired output format for the MSA.
-    Returns:
-        tuple: msa_text (str) and mutations (dict).
-               mutations is a dictionary mapping sequence ID to a list of tuples (Position, Reference, Variant).
     """
     try:
         pyfamsa_sequences = [
@@ -863,11 +762,6 @@ def perform_msa(sequences, reference_id, seq_type, output_format):
 def convert_format(sequences, output_format):
     """
     Convert sequences from the current format to the desired output format.
-    Parameters:
-        sequences (list of SeqRecord): List of sequences to convert.
-        output_format (str): Desired output format.
-    Returns:
-        tuple: converted_data (str) and error (str) if any.
     """
     try:
         output = StringIO()
@@ -881,11 +775,6 @@ def convert_format(sequences, output_format):
 def build_phylogenetic_tree(sequences, seq_type):
     """
     Build a simple phylogenetic tree from sequences using a distance matrix.
-    Parameters:
-        sequences (list of SeqRecord): List of sequences.
-        seq_type (str): Type of sequences ('DNA' or 'Protein').
-    Returns:
-        tree (Phylo.Tree): Phylogenetic tree object.
     """
     try:
         ids = [seq.id for seq in sequences]
@@ -908,12 +797,6 @@ def build_phylogenetic_tree(sequences, seq_type):
 def compute_distance(seq1, seq2, seq_type):
     """
     Compute a simple distance between two sequences.
-    Parameters:
-        seq1 (Seq): First sequence.
-        seq2 (Seq): Second sequence.
-        seq_type (str): Type of sequences ('DNA' or 'Protein').
-    Returns:
-        float: Calculated distance.
     """
     aligner = Align.PairwiseAligner()
     aligner.mode = 'global'
@@ -923,18 +806,26 @@ def compute_distance(seq1, seq2, seq_type):
         aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
     aligner.open_gap_score = -0.5
     aligner.extend_gap_score = -0.1
+
     alignments = aligner.align(seq1, seq2)
     if not alignments:
         return 1.0
+
     alignment = next(alignments)
-    aligned_seq1, match_line, aligned_seq2 = reconstruct_aligned_sequences(
-        str(alignment.aligned[0]),
-        str(alignment.aligned[1]),
-        alignment.aligned,
-        aligner.substitution_matrix
-    )
+    aligned_seq1 = str(alignment[0])
+    aligned_seq2 = str(alignment[1])
+
+    # Count differences (excluding positions with gaps)
     differences = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a != b and a != '-' and b != '-')
-    distance = differences / max(len(aligned_seq1), len(aligned_seq2))
+
+    # Count alignment positions without gaps in both sequences
+    valid_positions = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a != '-' and b != '-')
+
+    # Calculate distance as proportion of differences
+    if valid_positions == 0:
+        return 1.0
+
+    distance = differences / valid_positions
     return distance
 
 
