@@ -1057,7 +1057,7 @@ def msa_section(sequences, seq_type):
                                     st.dataframe(df)
 
                                     # Plot mutations if there aren't too many
-                                    if len(mut_list) <= 100:  # Limit for performance
+                                    if len(mut_list) <= 300:  # Limit for performance
                                         fig = go.Figure()
                                         fig.add_trace(go.Scatter(
                                             x=[pos for pos, _, _ in mut_list],
@@ -1076,6 +1076,11 @@ def msa_section(sequences, seq_type):
                                             showlegend=False
                                         )
                                         st.plotly_chart(fig, use_container_width=True)
+                                        
+                                        # write the name of the sequence followed by the single point mutation
+                                        string_mutations = ', '.join([f"{ref}{pos}{var}" for pos, ref, var in mut_list])
+                                        st.write(f"**{seq_id}:** {string_mutations}")
+                                            
                     else:
                         st.info("Select at least one sequence to view mutations.")
                 else:
