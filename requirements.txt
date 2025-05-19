@@ -5,3 +5,5 @@ plotly
 matplotlib
 pyfamsa
 typing-extensions
+networkx
+pygraphviz
