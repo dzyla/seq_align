@@ -40,7 +40,7 @@ def msa_to_image(alignment_text: str, format: str) -> tuple:
         alignment = AlignIO.read(StringIO(alignment_text), format)
     except Exception as e:
         st.error(f"An error occurred while parsing the MSA alignment: {e}")
-        raise e
+        return None, None
 
     AA_CODES = {
         "-": 0, "A": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6, "H": 7, "I": 8, "K": 9, "L": 10,
@@ -125,6 +125,14 @@ def plot_msa_image_plotly(msa_image: np.ndarray, msa_letters: np.ndarray):
 
     st.plotly_chart(fig, use_container_width=True)
 
+    img_bytes = fig.to_image(format="png")
+    st.download_button(
+        label="📥 Download MSA Heatmap (PNG)",
+        data=img_bytes,
+        file_name="msa_heatmap.png",
+        mime="image/png"
+    )
+
 
 def plot_msa_image_matplotlib(msa_image: np.ndarray, msa_letters: np.ndarray):
     """
@@ -134,7 +142,14 @@ def plot_msa_image_matplotlib(msa_image: np.ndarray, msa_letters: np.ndarray):
         msa_image (np.ndarray): Numerical representation of the MSA
         msa_letters (np.ndarray): Letter representation of the MSA
     """
-    _plot_msa_image_matplotlib_subset(msa_image, msa_letters, 0, 0)
+    img_buf = _plot_msa_image_matplotlib_subset(msa_image, msa_letters, 0, 0)
+    if img_buf:
+        st.download_button(
+            label="📥 Download MSA Heatmap (PNG)",
+            data=img_buf,
+            file_name="msa_heatmap.png",
+            mime="image/png"
+        )
 
 
 CODE_TO_AA = {
@@ -176,72 +191,44 @@ def _plot_msa_image_matplotlib_subset(msa_image_subset: np.ndarray, msa_letters_
     plt.savefig(buf, format="png", dpi=300, bbox_inches='tight')
     plt.close(fig)
     buf.seek(0)
-    img = buf.getvalue()
-    st.image(img, caption="MSA Heatmap", use_container_width=True)
+    st.image(buf, caption="MSA Heatmap", use_container_width=True)
+    return buf
 
 
 def init_session_state():
     """
     Initialize session state variables if they don't exist.
-
     This function ensures all required session state variables are properly initialized
     to prevent KeyError exceptions and enable proper state tracking.
     """
-    # MSA-related variables
-    if 'msa_result' not in st.session_state:
-        st.session_state.msa_result = None
-    if 'mutations' not in st.session_state:
-        st.session_state.mutations = None
-    if 'msa_image' not in st.session_state:
-        st.session_state.msa_image = None
-    if 'msa_letters' not in st.session_state:
-        st.session_state.msa_letters = None
-    if 'consensus_data' not in st.session_state:
-        st.session_state.consensus_data = None
-    if 'alignment_text' not in st.session_state:
-        st.session_state.alignment_text = None
-    if 'pairwise_mutations' not in st.session_state:
-        st.session_state.pairwise_mutations = None
+    # Define the default values for session state variables
+    defaults = {
+        "msa_result": None,
+        "mutations": None,
+        "msa_image": None,
+        "msa_letters": None,
+        "consensus_data": None,
+        "alignment_text": None,
+        "pairwise_mutations": None,
+        "sequences": None,
+        "seq_type": None,
+        "last_file": None,
+        "last_tree_file": None,
+        "tree": None,
+        "tree_newick": None,
+        "converted_data": None,
+        "conversion_error": None,
+        "last_conversion_params": {},
+        "selected_seqs": None,
+        "last_msa_params": {},
+        "last_pairwise_params": {},
+        "last_text_hash": None,
+    }
 
-    # Input-related variables
-    if 'sequences' not in st.session_state:
-        st.session_state.sequences = None
-    if 'seq_type' not in st.session_state:
-        st.session_state.seq_type = None
-    if 'last_file' not in st.session_state:
-        st.session_state.last_file = None
-    if 'last_tree_file' not in st.session_state:
-        st.session_state.last_tree_file = None
-    if 'tree' not in st.session_state:
-        st.session_state.tree = None
-    if 'tree_ascii' not in st.session_state:
-        st.session_state.tree_ascii = None
-    if 'tree_newick' not in st.session_state:
-        st.session_state.tree_newick = None
-
-    # Format conversion variables
-    if 'converted_data' not in st.session_state:
-        st.session_state.converted_data = None
-    if 'conversion_error' not in st.session_state:
-        st.session_state.conversion_error = None
-    if 'last_conversion_params' not in st.session_state:
-        st.session_state.last_conversion_params = {}
-
-    # Pairwise alignment variables
-    if 'selected_seqs' not in st.session_state:
-        st.session_state.selected_seqs = None
-
-    # MSA calculation state tracking
-    if 'last_msa_params' not in st.session_state:
-        st.session_state.last_msa_params = {}
-
-    # Pairwise alignment parameters tracking
-    if 'last_pairwise_params' not in st.session_state:
-        st.session_state.last_pairwise_params = {}
-
-    # Text input tracking
-    if 'last_text_hash' not in st.session_state:
-        st.session_state.last_text_hash = None
+    # Initialize session state variables if they don't exist
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
 def calculate_representative_sequence(alignment, threshold=0.7):
@@ -285,6 +272,111 @@ def calculate_representative_sequence(alignment, threshold=0.7):
     return consensus_record, closest_record, min_differences, closest_seq_id
 
 
+def have_params_changed(current_params: dict, last_params_key: str) -> bool:
+    """
+    Checks if the current parameters are different from the last stored parameters.
+    """
+    return st.session_state.get(last_params_key) != current_params
+
+
+def reset_results(keys_to_reset: List[str]):
+    """
+    Resets specified session state variables to their default values.
+    """
+    for key in keys_to_reset:
+        if key.endswith('_params'):
+            st.session_state[key] = {}
+        else:
+            st.session_state[key] = None
+
+
+def handle_input(input_format: str) -> Tuple[Optional[List[SeqRecord]], Optional[Phylo.BaseTree], Optional[st.uploaded_file_manager.UploadedFile]]:
+    """
+    Handles user input for sequences and trees based on the selected format.
+    """
+    sequences = None
+    tree = None
+    uploaded_file = None
+
+    if input_format == "Text (FASTA)":
+        seq_text = st.sidebar.text_area(
+            "Paste Sequences Here (FASTA Format)",
+            height=250,
+            placeholder=">Sequence1\nATGCGTA...\n>Sequence2\nATGCGTC...",
+            help="Enter your sequences in FASTA format"
+        )
+        if seq_text:
+            current_hash = hash(seq_text)
+            if 'last_text_hash' not in st.session_state or st.session_state.last_text_hash != current_hash:
+                st.session_state.last_text_hash = current_hash
+                sequences, error = parse_sequences_from_text(seq_text)
+                if error:
+                    st.sidebar.error(error)
+                else:
+                    st.sidebar.success(f"Successfully loaded {len(sequences)} sequences.")
+                    st.session_state.sequences = sequences
+            else:
+                sequences = st.session_state.sequences
+    elif input_format in ["PDB", "mmCIF"]:
+        uploaded_file = st.sidebar.file_uploader(
+            f"Upload {input_format} File",
+            type=get_file_extensions(input_format),
+            key=f"uploader_{input_format}",
+            help=f"Upload a {input_format} file to extract protein sequences"
+        )
+        if uploaded_file:
+            if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
+                st.session_state.last_file = uploaded_file.name
+                sequences, error = parse_sequences_from_structure(uploaded_file, input_format)
+                if error:
+                    st.sidebar.error(error)
+                else:
+                    st.sidebar.success(f"Successfully extracted {len(sequences)} sequences.")
+                    st.session_state.sequences = sequences
+            else:
+                sequences = st.session_state.sequences
+    elif input_format == "Newick":
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload Newick Tree File",
+            type=["nwk", "newick", "tree"],
+            key="uploader_newick",
+            help="Upload a Newick format tree file for visualization"
+        )
+        if uploaded_file:
+            if 'last_tree_file' not in st.session_state or st.session_state.last_tree_file != uploaded_file.name:
+                st.session_state.last_tree_file = uploaded_file.name
+                try:
+                    tree = Phylo.read(uploaded_file, "newick")
+                    st.session_state.tree = tree
+                    st.sidebar.success("Successfully loaded Newick tree.")
+                    # Reset tree visualization cache
+                    if 'tree_newick' in st.session_state: del st.session_state.tree_newick
+                except Exception as e:
+                    st.sidebar.error(f"Error reading Newick file: {e}")
+            else:
+                tree = st.session_state.tree
+    else:
+        uploaded_file = st.sidebar.file_uploader(
+            f"Upload {input_format} File",
+            type=get_file_extensions(input_format),
+            key=f"uploader_{input_format}",
+            help=f"Upload sequence file in {input_format} format"
+        )
+        if uploaded_file:
+            if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
+                st.session_state.last_file = uploaded_file.name
+                sequences, error = parse_sequences_from_file(uploaded_file, input_format)
+                if error:
+                    st.sidebar.error(error)
+                else:
+                    st.sidebar.success(f"Successfully loaded {len(sequences)} sequences.")
+                    st.session_state.sequences = sequences
+            else:
+                sequences = st.session_state.sequences
+
+    return sequences, tree, uploaded_file
+
+
 def main():
     st.set_page_config(page_title="Advanced Sequence Alignment Ability", layout="wide")
 
@@ -311,120 +403,16 @@ def main():
         help="Choose the format of your input sequences."
     )
 
-    sequences = None
-    tree = None
-    uploaded_file = None
+    sequences, tree, uploaded_file = handle_input(input_format)
 
-    # Handle different input methods based on format selection
-    if input_format == "Text (FASTA)":
-        seq_text = st.sidebar.text_area(
-            "Paste Sequences Here (FASTA Format)",
-            height=250,
-            placeholder=">Sequence1\nATGCGTA...\n>Sequence2\nATGCGTC...",
-            help="Enter your sequences in FASTA format"
-        )
-
-        # Only parse if text has changed
-        if seq_text:
-            current_hash = hash(seq_text)
-            if 'last_text_hash' not in st.session_state or st.session_state.last_text_hash != current_hash:
-                st.session_state.last_text_hash = current_hash
-                sequences, error = parse_sequences_from_text(seq_text)
-                if error:
-                    st.sidebar.error(error)
-                else:
-                    st.sidebar.success(f"Successfully loaded {len(sequences)} sequences.")
-                    st.session_state.sequences = sequences
-            else:
-                sequences = st.session_state.sequences
-    elif input_format in ["PDB", "mmCIF"]:
-        uploaded_file = st.sidebar.file_uploader(
-            "Upload PDB/mmCIF File",
-            type=get_file_extensions(input_format),
-            key=f"uploader_{input_format}",
-            help="Upload a PDB or mmCIF file to extract protein sequences"
-        )
-        if uploaded_file:
-            try:
-                # Only process if file is new or changed
-                file_changed = ('last_file' not in st.session_state or
-                               st.session_state.last_file != uploaded_file.name)
-
-                if file_changed:
-                    st.session_state.last_file = uploaded_file.name
-                    sequences, error = parse_sequences_from_structure(uploaded_file, input_format)
-                    if error:
-                        st.sidebar.error(error)
-                    else:
-                        st.sidebar.success(f"Successfully extracted {len(sequences)} sequences from the uploaded file.")
-                        st.session_state.sequences = sequences
-                else:
-                    sequences = st.session_state.sequences
-            except Exception as e:
-                st.sidebar.error(f"Error parsing {input_format} file: {e}")
-    elif input_format == "Newick":
-        uploaded_file = st.sidebar.file_uploader(
-            "Upload Newick Tree File",
-            type=["nwk", "newick", "tree"],
-            key="uploader_newick",
-            help="Upload a Newick format tree file for visualization"
-        )
-        if uploaded_file:
-            try:
-                # Only process if file is new or changed
-                file_changed = ('last_tree_file' not in st.session_state or
-                               st.session_state.last_tree_file != uploaded_file.name)
-
-                if file_changed:
-                    st.session_state.last_tree_file = uploaded_file.name
-                    tree = Phylo.read(uploaded_file, "newick")
-                    st.session_state.tree = tree
-
-                    # Reset tree visualization cache
-                    if 'tree_ascii' in st.session_state:
-                        del st.session_state.tree_ascii
-                    if 'tree_newick' in st.session_state:
-                        del st.session_state.tree_newick
-                else:
-                    tree = st.session_state.tree
-
-                st.sidebar.success("Successfully loaded Newick tree.")
-            except Exception as e:
-                st.sidebar.error(f"Error reading Newick file: {e}")
-    else:
-        uploaded_file = st.sidebar.file_uploader(
-            "Upload Sequence File",
-            type=get_file_extensions(input_format),
-            key=f"uploader_{input_format}",
-            help=f"Upload sequence file in {input_format} format"
-        )
-        if uploaded_file:
-            try:
-                # Only process if file is new or changed
-                file_changed = ('last_file' not in st.session_state or
-                               st.session_state.last_file != uploaded_file.name)
-
-                if file_changed:
-                    st.session_state.last_file = uploaded_file.name
-                    sequences, error = parse_sequences_from_file(uploaded_file, input_format)
-                    if error:
-                        st.sidebar.error(error)
-                    else:
-                        st.sidebar.success(f"Successfully loaded {len(sequences)} sequences.")
-                        st.session_state.sequences = sequences
-                else:
-                    sequences = st.session_state.sequences
-            except Exception as e:
-                st.sidebar.error(f"Error reading file: {e}")
-
-    # Get sequences from session state if available
+    # Retrieve from session state if not loaded from input
     if sequences is None and 'sequences' in st.session_state:
         sequences = st.session_state.sequences
-
     if tree is None and 'tree' in st.session_state:
         tree = st.session_state.tree
 
-    if (sequences and len(sequences) > 0) or input_format == "Newick":
+    if (sequences and len(sequences) > 0) or tree:
+        seq_type = None
         if sequences:
             seq_type = st.sidebar.selectbox(
                 "🔬 Select Sequence Type",
@@ -432,58 +420,52 @@ def main():
                 help="Choose whether your sequences are DNA or Protein.",
                 index=1
             )
-
-            # Only update the session state if the selection has changed
             if 'seq_type' not in st.session_state or st.session_state.seq_type != seq_type:
                 st.session_state.seq_type = seq_type
-                # If sequence type changes, invalidate previous results
-                st.session_state.msa_result = None
-                st.session_state.mutations = None
-                st.session_state.msa_image = None
-                st.session_state.msa_letters = None
-                st.session_state.consensus_data = None
-                st.session_state.alignment_text = None
-                st.session_state.pairwise_mutations = None
-                st.session_state.last_msa_params = {}
-                st.session_state.last_pairwise_params = {}
-        else:
-            seq_type = st.session_state.seq_type if 'seq_type' in st.session_state else None
+                # Invalidate results if sequence type changes
+                keys_to_reset = [
+                    'msa_result', 'mutations', 'msa_image', 'msa_letters',
+                    'consensus_data', 'alignment_text', 'pairwise_mutations',
+                    'last_msa_params', 'last_pairwise_params'
+                ]
+                reset_results(keys_to_reset)
 
-        if sequences and input_format not in ["PDB", "mmCIF"]:
-            alignment_mode = st.sidebar.selectbox(
-                "🛠️ Select Alignment Mode",
-                ("Pairwise", "MSA", "Convert Formats"),
-                help="Choose the type of analysis you want to perform."
-            )
-        elif sequences and input_format in ["PDB", "mmCIF"]:
-            alignment_mode = None
-        else:
+        alignment_mode = None
+        if sequences:
+            options = ("Pairwise", "MSA", "Convert Formats", "Phylogenetic Tree")
+            if input_format in ["PDB", "mmCIF"]:
+                options = ("Extracted Sequences", "Phylogenetic Tree")
+            alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options)
+        elif tree:
             alignment_mode = "Phylogenetic Tree"
 
-        if sequences:
-            if input_format in ["PDB", "mmCIF"]:
-                st.header("📄 Extracted FASTA Sequences")
-                fasta_io = StringIO()
-                SeqIO.write(sequences, fasta_io, "fasta")
-                fasta_str = fasta_io.getvalue()
-                st.text_area("FASTA Sequences", value=fasta_str, height=500)
-                file_basename = os.path.splitext(os.path.basename(uploaded_file.name))[0]
-                st.download_button(
-                    label="📥 Download FASTA",
-                    data=fasta_str,
-                    file_name=f"{file_basename}_sequences.fasta",
-                    mime="text/plain"
-                )
-            else:
-                if alignment_mode == "Pairwise":
-                    pairwise_alignment_section(sequences, seq_type)
-                elif alignment_mode == "MSA":
-                    msa_section(sequences, seq_type)
-                elif alignment_mode == "Convert Formats":
-                    format_conversion_section(sequences, input_format)
-        else:
-            if alignment_mode == "Phylogenetic Tree":
+        if alignment_mode == "Extracted Sequences":
+            st.header("📄 Extracted FASTA Sequences")
+            fasta_io = StringIO()
+            SeqIO.write(sequences, fasta_io, "fasta")
+            fasta_str = fasta_io.getvalue()
+            st.text_area("FASTA Sequences", value=fasta_str, height=500)
+            file_basename = os.path.splitext(os.path.basename(uploaded_file.name))[0]
+            st.download_button(label="📥 Download FASTA", data=fasta_str, file_name=f"{file_basename}_sequences.fasta", mime="text/plain")
+        elif alignment_mode == "Pairwise":
+            pairwise_alignment_section(sequences, seq_type)
+        elif alignment_mode == "MSA":
+            msa_section(sequences, seq_type)
+        elif alignment_mode == "Convert Formats":
+            format_conversion_section(sequences, input_format)
+        elif alignment_mode == "Phylogenetic Tree":
+            if tree:
                 phylogenetic_tree_section(tree)
+            elif sequences:
+                with st.spinner("Building phylogenetic tree..."):
+                    new_tree = build_phylogenetic_tree(sequences, seq_type)
+                    if new_tree:
+                        st.session_state.tree = new_tree
+                        if 'tree_ascii' in st.session_state: del st.session_state.tree_ascii
+                        if 'tree_newick' in st.session_state: del st.session_state.tree_newick
+                        phylogenetic_tree_section(new_tree)
+                    else:
+                        st.error("Could not build the phylogenetic tree.")
     else:
         st.info("Please upload sequences or a Newick tree in the sidebar to begin.")
 
@@ -580,6 +562,15 @@ def parse_sequences_from_file(file, format_name):
         sequences = list(SeqIO.parse(seq_io, format_name.lower()))
         if not sequences:
             return None, f"No sequences found in the uploaded {format_name} file."
+
+        sequence_ids = set()
+        for seq in sequences:
+            if seq.id in sequence_ids:
+                return None, f"Duplicate sequence ID found: '{seq.id}'. Each sequence must have a unique ID."
+            sequence_ids.add(seq.id)
+            if not str(seq.seq).strip():
+                return None, f"Sequence '{seq.id}' is empty. Please provide valid sequences."
+
         return sequences, None
     except Exception as e:
         return None, f"Error parsing {format_name} file: {e}"
@@ -680,6 +671,13 @@ def parse_sequences_from_structure(file, format_name):
             if not sequences:
                 return None, "No protein sequences could be extracted from the structure file."
 
+            # Check for duplicate sequence IDs
+            sequence_ids = set()
+            for seq in sequences:
+                if seq.id in sequence_ids:
+                    return None, f"Duplicate sequence ID found: '{seq.id}'. Each sequence must have a unique ID."
+                sequence_ids.add(seq.id)
+
             return sequences, None
         finally:
             # Clean up temporary file
@@ -743,6 +741,53 @@ def get_msa_as_fasta(msa: List[PyFAMSASequence]) -> str:
     except Exception as e:
         st.error(f"An error occurred while converting MSA to FASTA: {e}")
         return ""
+
+
+import re
+
+
+def convert_mutations_to_csv(mutations: List[str]) -> str:
+    """
+    Converts a list of mutation strings to a CSV formatted string.
+    """
+    if not mutations:
+        return ""
+
+    mutation_data = []
+    for mut in mutations:
+        match = re.match(r"([A-Z-])(\d+)([A-Z-])", mut)
+        if match:
+            original, position, mutated = match.groups()
+            mutation_data.append([original, int(position), mutated])
+
+    if not mutation_data:
+        return ""
+
+    df = pd.DataFrame(mutation_data, columns=["Original", "Position", "Mutated"])
+    output = StringIO()
+    df.to_csv(output, index=False)
+    return output.getvalue()
+
+
+def convert_msa_mutations_to_csv(mutations: Dict[str, List[Tuple[int, str, str]]]) -> str:
+    """
+    Converts a dictionary of MSA mutations to a CSV formatted string.
+    """
+    if not mutations:
+        return ""
+
+    all_mutations = []
+    for seq_id, mut_list in mutations.items():
+        for pos, ref, var in mut_list:
+            all_mutations.append([seq_id, pos, ref, var])
+
+    if not all_mutations:
+        return ""
+
+    df = pd.DataFrame(all_mutations, columns=["Sequence_ID", "Position", "Reference", "Variant"])
+    output = StringIO()
+    df.to_csv(output, index=False)
+    return output.getvalue()
 
 
 def pairwise_alignment_section(sequences, seq_type):
@@ -849,8 +894,7 @@ def pairwise_alignment_section(sequences, seq_type):
     }
 
     # Check if parameters have changed
-    params_changed = ('last_pairwise_params' not in st.session_state or
-                      st.session_state.last_pairwise_params != current_params)
+    params_changed = have_params_changed(current_params, 'last_pairwise_params')
 
     run_alignment = st.button("Run Pairwise Alignment")
 
@@ -858,7 +902,7 @@ def pairwise_alignment_section(sequences, seq_type):
     if run_alignment or (st.session_state.get('alignment_text') is not None and not params_changed):
         # Only recalculate if parameters changed or explicitly requested
         if run_alignment or params_changed:
-            with st.spinner("Aligning sequences..."):
+            with st.spinner("Performing pairwise alignment..."):
                 alignment_text, mutations = perform_pairwise_alignment(
                     seq1, seq2, seq_type, align_mode.lower(), open_gap_score, extend_gap_score
                 )
@@ -900,6 +944,15 @@ def pairwise_alignment_section(sequences, seq_type):
                 showlegend=False
             )
             st.plotly_chart(fig, use_container_width=True)
+
+            csv_mutations = convert_mutations_to_csv(st.session_state.pairwise_mutations)
+            if csv_mutations:
+                st.download_button(
+                    label="📥 Download Mutations (CSV)",
+                    data=csv_mutations,
+                    file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv",
+                    mime="text/csv"
+                )
         else:
             st.write("No point mutations detected.")
 
@@ -974,8 +1027,7 @@ def msa_section(sequences, seq_type):
         current_msa_params['consensus_threshold'] = consensus_threshold
 
     # Check if MSA parameters have changed
-    msa_params_changed = ('last_msa_params' not in st.session_state or
-                         st.session_state.last_msa_params != current_msa_params)
+    msa_params_changed = have_params_changed(current_msa_params, 'last_msa_params')
 
     run_msa = st.button("Run MSA")
 
@@ -1002,165 +1054,102 @@ def msa_section(sequences, seq_type):
                         st.error(f"Failed to generate MSA heatmap: {e}")
 
         if st.session_state.msa_result:
-            st.subheader("📄 MSA Result")
-            seqs_total = parse_sequences_from_text(st.session_state.msa_result)[0]
-            st.write(f"Total sequences: {len(seqs_total)}. MSA length: {len(seqs_total[0].seq)}")
+            tab_titles = ["Alignment & Heatmap", "Point Mutations"]
+            if calculate_representative:
+                tab_titles.append("Representative Sequence")
 
-            if st.session_state.msa_image is not None and st.session_state.msa_letters is not None:
-                plot_msa_image(st.session_state.msa_image, st.session_state.msa_letters, plot_method)
+            tabs = st.tabs(tab_titles)
 
-            st.subheader("🔍 Point Mutations Relative to Reference")
-            if st.session_state.mutations:
-                # Allow user to select which sequences to view mutations for
-                seq_ids = sorted(list(st.session_state.mutations.keys()))
+            with tabs[0]:
+                st.subheader("📄 MSA Result")
+                seqs_total, _ = parse_sequences_from_text(st.session_state.msa_result)
+                if seqs_total:
+                    st.write(f"Total sequences: {len(seqs_total)}. MSA length: {len(seqs_total[0].seq)}")
 
-                if len(seq_ids) > 0:
-                    # Add a "Select All" option if there are many sequences
-                    if len(seq_ids) > 10:
-                        select_all = st.checkbox(
-                            "Select all sequences",
-                            value=False,
-                            key="select_all_mutations",
-                            help="Show mutations for all sequences"
-                        )
+                if st.session_state.msa_image is not None and st.session_state.msa_letters is not None:
+                    plot_msa_image(st.session_state.msa_image, st.session_state.msa_letters, plot_method)
 
-                        if select_all:
-                            selected_seq_ids = seq_ids
-                        else:
-                            # Default to showing first few sequences if count is high
-                            default_selection = seq_ids[:min(5, len(seq_ids))]
-                            selected_seq_ids = st.multiselect(
-                                "Select sequences to view mutations for:",
-                                seq_ids,
-                                default=default_selection,
-                                key="mutation_sequence_selector",
-                                help="Choose which sequences to display mutations for"
-                            )
-                    else:
-                        # For fewer sequences, just show the multiselect with all selected by default
-                        selected_seq_ids = st.multiselect(
+                st.download_button(
+                    label="📥 Download MSA",
+                    data=st.session_state.msa_result,
+                    file_name=f"msa_alignment.{msa_output_format}",
+                    mime=f"text/{msa_output_format}"
+                )
+
+            with tabs[1]:
+                st.subheader("🔍 Point Mutations Relative to Reference")
+                if st.session_state.mutations:
+                    seq_ids = sorted(list(st.session_state.mutations.keys()))
+                    if seq_ids:
+                        select_all = st.checkbox("Select all sequences", value=True, key="select_all_mutations")
+                        selected_seq_ids = seq_ids if select_all else st.multiselect(
                             "Select sequences to view mutations for:",
                             seq_ids,
-                            default=seq_ids[:min(10, len(seq_ids))],
-                            key="mutation_sequence_selector",
-                            help="Choose which sequences to display mutations for"
+                            default=seq_ids[:min(5, len(seq_ids))],
+                            key="mutation_sequence_selector"
                         )
-
-                    if selected_seq_ids:
                         for seq_id in selected_seq_ids:
                             mut_list = st.session_state.mutations.get(seq_id, [])
                             if mut_list:
-                                # Each mutation tuple is (position, ref_base, variant)
-                                df = pd.DataFrame(mut_list, columns=["Position", "Reference", "Variant"])
-
                                 with st.expander(f"Mutations for {seq_id} ({len(mut_list)} mutations)"):
+                                    df = pd.DataFrame(mut_list, columns=["Position", "Reference", "Variant"])
                                     st.dataframe(df)
+                                    string_mutations = ', '.join([f"{ref}{pos}{var}" for pos, ref, var in mut_list])
+                                    st.write(f"**Mutations:** {string_mutations}")
 
-                                    # Plot mutations if there aren't too many
-                                    if len(mut_list) <= 300:  # Limit for performance
-                                        fig = go.Figure()
-                                        fig.add_trace(go.Scatter(
-                                            x=[pos for pos, _, _ in mut_list],
-                                            y=[1]*len(mut_list),
-                                            mode='markers',
-                                            marker=dict(size=8, color='red'),
-                                            text=[f"{ref}{pos}{var}" for pos, ref, var in mut_list],
-                                            hoverinfo='text'
-                                        ))
-                                        fig.update_layout(
-                                            title=f"Mutations in {seq_id}",
-                                            xaxis_title="Position in Reference Sequence",
-                                            yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                                            height=200,
-                                            margin=dict(l=20, r=20, t=30, b=20),
-                                            showlegend=False
-                                        )
-                                        st.plotly_chart(fig, use_container_width=True)
-                                        
-                                        # write the name of the sequence followed by the single point mutation
-                                        string_mutations = ', '.join([f"{ref}{pos}{var}" for pos, ref, var in mut_list])
-                                        st.write(f"**{seq_id}:** {string_mutations}")
-                                            
-                    else:
-                        st.info("Select at least one sequence to view mutations.")
+                    csv_mutations = convert_msa_mutations_to_csv(st.session_state.mutations)
+                    if csv_mutations:
+                        st.download_button(
+                            label="📥 Download All Mutations (CSV)",
+                            data=csv_mutations,
+                            file_name="msa_mutations.csv",
+                            mime="text/csv"
+                        )
                 else:
-                    st.info("No sequences with mutations detected.")
-            else:
-                st.write("No point mutations detected relative to the reference sequence.")
+                    st.write("No point mutations detected relative to the reference sequence.")
 
-            # Add representative sequence calculation if requested
             if calculate_representative:
-                # Only calculate if not already done or if user changes threshold
-                recalculate = (st.session_state.consensus_data is None or
-                              'threshold' not in st.session_state.consensus_data or
-                              st.session_state.consensus_data['threshold'] != consensus_threshold)
-
-                st.subheader("🧬 Representative Sequence Analysis")
-
-                if recalculate:
-                    with st.spinner("Calculating consensus and representative sequence..."):
-                        try:
-                            # Get alignment object from MSA result
+                with tabs[2]:
+                    st.subheader("🧬 Representative Sequence Analysis")
+                    recalculate = (st.session_state.consensus_data is None or
+                                  'threshold' not in st.session_state.consensus_data or
+                                  st.session_state.consensus_data['threshold'] != consensus_threshold)
+                    if recalculate:
+                        with st.spinner("Calculating consensus..."):
                             alignment = AlignIO.read(StringIO(st.session_state.msa_result), msa_output_format)
-
-                            # Calculate representative sequence with user-selected threshold
-                            consensus_record, closest_record, min_differences, closest_seq_id = calculate_representative_sequence(
-                                alignment, threshold=consensus_threshold
-                            )
-
-                            # Store in session state
+                            consensus_record, closest_record, min_diff, closest_seq_id = calculate_representative_sequence(alignment, threshold=consensus_threshold)
                             st.session_state.consensus_data = {
                                 'threshold': consensus_threshold,
                                 'consensus_record': consensus_record,
                                 'closest_record': closest_record,
-                                'min_differences': min_differences,
+                                'min_differences': min_diff,
                                 'closest_seq_id': closest_seq_id,
                                 'alignment_length': alignment.get_alignment_length(),
                                 'seq_count': len(alignment)
                             }
-                        except Exception as e:
-                            st.error(f"Failed to calculate representative sequence: {str(e)}")
-                            st.info("Try adjusting the consensus threshold or check if your sequences are properly aligned.")
 
-                # Display results if available
-                if st.session_state.consensus_data:
-                    data = st.session_state.consensus_data
-                    st.write(f"**Consensus threshold:** {data['threshold']}")
-                    st.write(f"**Number of sequences:** {data['seq_count']}")
-                    st.write(f"**Alignment length:** {data['alignment_length']} positions")
+                    if st.session_state.consensus_data:
+                        data = st.session_state.consensus_data
+                        st.write(f"**Consensus threshold:** {data['threshold']}")
+                        st.write(f"**Number of sequences:** {data['seq_count']}")
 
-                    col1, col2 = st.columns(2)
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("#### Consensus Sequence")
+                            st.code(f">{data['consensus_record'].id}\n{data['consensus_record'].seq}")
+                        with col2:
+                            st.markdown("#### Most Representative Sequence")
+                            st.write(f"**Sequence ID:** `{data['closest_seq_id']}`")
+                            st.write(f"**Differences from consensus:** {data['min_differences']}")
+                            st.code(f">{data['closest_record'].id}\n{data['closest_record'].seq}")
 
-                    with col1:
-                        st.markdown("### Consensus Sequence")
-                        st.info("Consensus shows the most common residue at each position based on the threshold")
-                        st.code(f">Consensus\n{data['consensus_record'].seq}")
-
-                    with col2:
-                        st.markdown("### Most Representative Sequence")
-                        st.info("This sequence is most similar to the consensus sequence")
-                        st.write(f"**Sequence ID:** `{data['closest_seq_id']}`")
-                        st.write(f"**Differences from consensus:** {data['min_differences']}")
-                        st.code(f">{data['closest_seq_id']}\n{data['closest_record'].seq}")
-
-                    # Create downloadable file with consensus and representative sequence
-                    consensus_fasta_io = StringIO()
-                    SeqIO.write([data['consensus_record'], data['closest_record']], consensus_fasta_io, "fasta")
-                    consensus_fasta = consensus_fasta_io.getvalue()
-
-                    st.download_button(
-                        label="📥 Download Consensus and Representative Sequence",
-                        data=consensus_fasta,
-                        file_name="consensus_and_representative.fasta",
-                        mime="text/plain"
-                    )
-
-            st.download_button(
-                label="📥 Download MSA",
-                data=st.session_state.msa_result,
-                file_name=f"msa_alignment.{msa_output_format}",
-                mime=f"text/{msa_output_format}"
-            )
+                        consensus_fasta = f">{data['consensus_record'].id}\n{data['consensus_record'].seq}\n>{data['closest_record'].id}\n{data['closest_record'].seq}"
+                        st.download_button(
+                            label="📥 Download Consensus/Representative (FASTA)",
+                            data=consensus_fasta,
+                            file_name="consensus_representative.fasta",
+                            mime="text/plain"
+                        )
 
 
 def format_conversion_section(sequences, input_format):
@@ -1191,8 +1180,7 @@ def format_conversion_section(sequences, input_format):
     }
 
     # Check if parameters have changed
-    params_changed = ('last_conversion_params' not in st.session_state or
-                      st.session_state.last_conversion_params != current_params)
+    params_changed = have_params_changed(current_params, 'last_conversion_params')
 
     convert_button = st.button("Convert Format")
 
@@ -1233,38 +1221,49 @@ def format_conversion_section(sequences, input_format):
 def phylogenetic_tree_section(tree):
     """
     Handles the phylogenetic tree visualization workflow.
-
-    Parameters:
-        tree: BioPython Tree object to visualize
     """
     st.header("🌳 Phylogenetic Tree")
-    st.info(
-        "Phylogenetic trees show evolutionary relationships among sequences. "
-        "This visualization displays the hierarchical clustering of your sequences."
-    )
+    st.info("This section visualizes the phylogenetic tree and provides the Newick format for download.")
 
     if not tree:
         st.warning("No phylogenetic tree to display.")
         return
 
-    st.subheader("📄 Phylogenetic Tree")
+    # Visualization
+    st.subheader("📊 Tree Visualization")
+    fig, ax = plt.subplots(figsize=(10, 10))
+    try:
+        Phylo.draw(tree, axes=ax)
+        st.pyplot(fig)
 
-    # Only redraw the tree when needed
-    if 'tree_ascii' not in st.session_state:
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        st.download_button(
+            label="📥 Download Tree Image (PNG)",
+            data=buf,
+            file_name="phylogenetic_tree.png",
+            mime="image/png"
+        )
+    except Exception as e:
+        st.error(f"Could not draw the tree graphically: {e}")
+        st.info("Displaying ASCII version of the tree instead.")
         tree_io = StringIO()
         Phylo.draw_ascii(tree, out=tree_io)
-        st.session_state.tree_ascii = tree_io.getvalue()
+        st.code(tree_io.getvalue())
 
+    # Newick format
+    st.subheader("📄 Newick Format")
+    if 'tree_newick' not in st.session_state or not st.session_state.get('tree_newick'):
         tree_newick_io = StringIO()
         Phylo.write(tree, tree_newick_io, "newick")
         st.session_state.tree_newick = tree_newick_io.getvalue()
 
-    st.text(st.session_state.tree_ascii)
-
+    st.code(st.session_state.tree_newick)
     st.download_button(
-        label="📥 Download Phylogenetic Tree (Newick)",
+        label="📥 Download Newick File",
         data=st.session_state.tree_newick,
-        file_name="phylogenetic_tree.newick",
+        file_name="phylogenetic_tree.nwk",
         mime="text/plain"
     )
 
