@@ -12,7 +12,7 @@ from io import StringIO, BytesIO
 import traceback
 import numpy as np
 import plotly.graph_objects as go
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import matplotlib.patches as mpatches
@@ -290,7 +290,7 @@ def reset_results(keys_to_reset: List[str]):
             st.session_state[key] = None
 
 
-def handle_input(input_format: str) -> Tuple[Optional[List[SeqRecord]], Optional[Phylo.BaseTree], Optional[st.uploaded_file_manager.UploadedFile]]:
+def handle_input(input_format: str) -> Tuple[Optional[List[SeqRecord]], Optional[Phylo.BaseTree], Optional[Any]]:
     """
     Handles user input for sequences and trees based on the selected format.
     """
