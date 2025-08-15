@@ -1264,9 +1264,39 @@ def phylogenetic_tree_section(tree):
 
     # Visualization
     st.subheader("📊 Tree Visualization")
+
+    # Add UI for customization
+    st.sidebar.subheader("Tree Visualization Settings")
+    color_map_name = st.sidebar.selectbox(
+        "Select Label Color Map",
+        ("viridis", "plasma", "inferno", "magma", "cividis", "rainbow", "jet", "nipy_spectral"),
+        index=0,
+        help="Choose a color map for the sequence labels."
+    )
+    line_width = st.sidebar.slider(
+        "Branch Line Width",
+        min_value=0.5,
+        max_value=5.0,
+        value=1.5,
+        step=0.5,
+        help="Adjust the thickness of the tree branches."
+    )
+
     fig, ax = plt.subplots(figsize=(10, 10))
     try:
-        Phylo.draw(tree, axes=ax)
+        # Set line width for branches
+        plt.rc('lines', linewidth=line_width)
+
+        # Generate colors for labels
+        terminals = tree.get_terminals()
+        if terminals:
+            cmap = plt.get_cmap(color_map_name)
+            colors = cmap(np.linspace(0, 1, len(terminals)))
+            label_colors = {terminal.name: color for terminal, color in zip(terminals, colors)}
+        else:
+            label_colors = None
+
+        Phylo.draw(tree, axes=ax, label_colors=label_colors)
         st.pyplot(fig)
 
         buf = BytesIO()
