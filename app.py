@@ -6,7 +6,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.Align import substitution_matrices
 from Bio import Phylo
-from Bio.Phylo.TreeConstruction import DistanceTreeConstructor, DistanceMatrix
+from Bio.Phylo.TreeConstruction import DistanceTreeConstructor, DistanceMatrix, DistanceCalculator
 from Bio.PDB import PDBParser, MMCIFParser, PPBuilder, PDBIO
 from io import StringIO, BytesIO
 import traceback
@@ -223,6 +223,7 @@ def init_session_state():
         "last_msa_params": {},
         "last_pairwise_params": {},
         "last_text_hash": None,
+        "msa_tree": None,
     }
 
     # Initialize session state variables if they don't exist
@@ -406,7 +407,7 @@ def main():
     st.sidebar.header("📥 Upload and Settings")
     input_format = st.sidebar.selectbox(
         "Select Input Format",
-        ("Text (FASTA)", "FASTA", "Clustal", "Phylip", "EMBL", "GenBank", "Newick", "PDB", "mmCIF"),
+        ("Text (FASTA)", "FASTA", "Clustal", "GenBank", "Newick", "PDB", "mmCIF"),
         help="Choose the format of your input sequences."
     )
 
@@ -513,8 +514,6 @@ def get_file_extensions(format_name):
     format_extensions = {
         "FASTA": ["fasta", "fa", "fna", "ffn", "faa", "frn", "fsa", "seq"],
         "Clustal": ["clustal", "aln", "clw"],
-        "Phylip": ["phy", "ph", "phylip"],
-        "EMBL": ["embl", "ebl", "emb"],
         "GenBank": ["gb", "gbk", "genbank"],
         "Newick": ["nwk", "newick", "tree"],
         "PDB": ["pdb", "ent"],
@@ -583,6 +582,10 @@ def parse_sequences_from_file(file, format_name):
             sequence_ids.add(seq.id)
             if not str(seq.seq).strip():
                 return None, f"Sequence '{seq.id}' is empty. Please provide valid sequences."
+
+        if format_name.lower() == 'clustal':
+            for seq_record in sequences:
+                seq_record.seq = seq_record.seq.ungap("-")
 
         return sequences, None
     except Exception as e:
@@ -1067,9 +1070,9 @@ def msa_section(sequences, seq_type):
                         st.error(f"Failed to generate MSA heatmap: {e}")
 
         if st.session_state.msa_result:
-            tab_titles = ["Alignment & Heatmap", "Point Mutations"]
+            tab_titles = ["Alignment & Heatmap", "Point Mutations", "Phylogenetic Tree"]
             if calculate_representative:
-                tab_titles.append("Representative Sequence")
+                tab_titles.insert(2, "Representative Sequence")
 
             tabs = st.tabs(tab_titles)
 
@@ -1163,6 +1166,18 @@ def msa_section(sequences, seq_type):
                             file_name="consensus_representative.fasta",
                             mime="text/plain"
                         )
+
+            with tabs[-1]:
+                st.subheader("🌳 Phylogenetic Tree from MSA")
+                if st.button("Calculate Phylogenetic Tree from MSA"):
+                    with st.spinner("Building tree from MSA..."):
+                        alignment = AlignIO.read(StringIO(st.session_state.msa_result), msa_output_format)
+                        tree = build_tree_from_alignment(alignment, seq_type)
+                        if tree:
+                            st.session_state.msa_tree = tree
+
+                if 'msa_tree' in st.session_state and st.session_state.msa_tree:
+                    phylogenetic_tree_section(st.session_state.msa_tree)
 
 
 def format_conversion_section(sequences, input_format):
@@ -1548,6 +1563,25 @@ def convert_format(sequences, output_format):
         return converted_data, None
     except Exception as e:
         return None, f"Error during format conversion: {e}"
+
+
+def build_tree_from_alignment(alignment, seq_type):
+    """
+    Build a phylogenetic tree from a Multiple Sequence Alignment.
+    """
+    try:
+        if seq_type == 'DNA':
+            calculator = DistanceCalculator('identity')
+        else: # Protein
+            calculator = DistanceCalculator('blosum62')
+
+        dm = calculator.get_distance(alignment)
+        constructor = DistanceTreeConstructor()
+        tree = constructor.upgma(dm)
+        return tree
+    except Exception as e:
+        st.error(f"Tree construction from MSA failed: {e}")
+        return None
 
 
 def build_phylogenetic_tree(sequences, seq_type):
