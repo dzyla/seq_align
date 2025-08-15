@@ -1,230 +1,43 @@
 import streamlit as st
-from Bio import AlignIO, SeqIO, Phylo, Align
+from Bio import AlignIO
+from Bio import Align
+from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.Align import substitution_matrices
 from Bio import Phylo
-from Bio.Phylo.TreeConstruction import DistanceTreeConstructor, DistanceMatrix
+from Bio.Phylo.TreeConstruction import DistanceTreeConstructor, DistanceMatrix, DistanceCalculator
 from Bio.PDB import PDBParser, MMCIFParser, PPBuilder, PDBIO
 from io import StringIO, BytesIO
 import traceback
 import numpy as np
 import plotly.graph_objects as go
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import matplotlib.patches as mpatches
 import os
 import pandas as pd
 import tempfile
-import random
+from Bio.Align import AlignInfo
 
 # Import pyFAMSA
 from pyfamsa import Aligner as PyFAMSAAligner, Sequence as PyFAMSASequence
 
-# --- Helper function for manual tree layout ---
-def _get_node_layout(tree: Phylo.BaseTree.Tree):
-    """
-    Calculates x and y coordinates for each node in the tree for manual Plotly plotting.
-    Returns:
-        node_positions (dict): {clade: (x, y)}
-        max_x (float): Maximum x coordinate, useful for label positioning and axis scaling.
-    """
-    node_positions = {}
-    
-    # Assign initial y positions to terminal nodes (tips)
-    y_current = 0
-    tip_spacing = 10 
-    
-    processed_tips_for_y = set()
-    for tip in tree.get_terminals(order='preorder'): # Ensures consistent Y ordering for tips
-        if tip not in processed_tips_for_y:
-            # Store y directly on the clade object temporarily for easy access during parent calculation
-            tip.y_coord_temp_manual = y_current 
-            processed_tips_for_y.add(tip)
-            y_current += tip_spacing
 
-    max_x = 0.0
-    
-    # --- Build a parent map first ---
-    # This allows us to look up the parent of any clade efficiently.
-    parents = {child: parent for parent in tree.find_clades(order='preorder') for child in parent.clades}
-
-    # Calculate y for internal nodes using a postorder traversal.
-    # This ensures that children's y-coordinates (which might be tips or other internal nodes)
-    # are already computed and stored on the temporary attribute.
-    for node in tree.find_clades(order='postorder'):
-        if node.is_terminal():
-            # y_coord_temp_manual was already set for tips.
-            pass 
-        else:
-            # For internal nodes, y is the average of its children's y-coordinates.
-            child_ys = [getattr(child, 'y_coord_temp_manual', 0) for child in node.clades]
-            if child_ys:
-                node.y_coord_temp_manual = sum(child_ys) / len(child_ys)
-            else: 
-                # This case should ideally not be reached for a valid tree structure if tips are handled.
-                # If a non-terminal node has no children with y_coord_temp_manual, default its y.
-                node.y_coord_temp_manual = 0 
-
-    # Calculate final x and y coordinates, and populate node_positions using a preorder traversal.
-    # Preorder ensures that a parent's x-coordinate is known when its children are processed.
-    for node in tree.find_clades(order='preorder'):
-        parent_x = 0
-        node_parent = parents.get(node) # Use the precomputed parent map
-
-        if node_parent and node_parent in node_positions: 
-            parent_x = node_positions[node_parent][0]
-        
-        # Ensure branch_length is not None; use a small default if it is for visualization.
-        branch_length = node.branch_length if node.branch_length is not None else 0.01
-        current_x = parent_x + branch_length
-        
-        if current_x > max_x:
-            max_x = current_x
-            
-        # Get the y-coordinate that was computed (either for tips or averaged for internal nodes).
-        current_y = getattr(node, 'y_coord_temp_manual', 0) 
-        node_positions[node] = (current_x, current_y)
-
-    # Clean up the temporary y-coordinate attribute from all clades.
-    for node in tree.find_clades():
-        if hasattr(node, 'y_coord_temp_manual'):
-            delattr(node, 'y_coord_temp_manual')
-            
-    return node_positions, max_x
-
-# --- Phylogenetic Tree Plotting Function (Manual Layout) ---
-def plot_phylogenetic_tree_plotly(tree: Phylo.BaseTree.Tree):
-    """ Plots a Biopython tree using manually calculated layout and Plotly for rendering. """
-    if not tree or not tree.root:
-        st.warning("Tree object is empty or invalid.")
-        return None
-
-    num_terminals = tree.count_terminals()
-    if num_terminals == 0:
-        st.warning("Tree has no terminal nodes (sequences) to plot.")
-        return None
-    
-    # Handle single sequence tree (single terminal node)
-    if num_terminals == 1 and (not tree.root.clades or len(tree.root.clades) == 0):
-        term_node = list(tree.get_terminals())[0]
-        fig_single = go.Figure(data=[go.Scatter(x=[0], y=[0], mode='markers+text',
-                                                text=[term_node.name or "Sequence"],
-                                                textposition="bottom center", marker_size=10)])
-        fig_single.update_layout(title=f"Tree: {term_node.name or 'Sequence'}", height=200, plot_bgcolor='white',
-                                 xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, visible=False),
-                                 yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, visible=False))
-        return fig_single
-    
-    if num_terminals < 2: # Should be caught by single terminal, but defensive
-        st.warning(f"Tree has only {num_terminals} terminal(s). Cannot draw a meaningful phylogenetic graph.")
-        return None
-
-    node_positions, max_x_coord = _get_node_layout(tree)
-    
-    # Build parent map again for drawing, or pass it from _get_node_layout if preferred
-    parents_for_drawing = {child: parent for parent in tree.find_clades(order='preorder') for child in parent.clades}
-
-
-    edge_x_coords, edge_y_coords = [], []
-    node_x_plot, node_y_plot, node_plot_labels, node_hover_texts = [], [], [], []
-
-    for clade, (x_clade, y_clade) in node_positions.items():
-        node_x_plot.append(x_clade)
-        node_y_plot.append(y_clade)
-        
-        label_on_plot = ""
-        hover_text = str(clade.name) if clade.name else ("Internal Node" if not clade.is_terminal() else "Tip")
-        if clade.is_terminal() and clade.name:
-            label_on_plot = str(clade.name)
-        
-        if hasattr(clade, 'confidence') and clade.confidence is not None:
-            hover_text += f" (Conf: {clade.confidence:.2f})" if isinstance(clade.confidence, float) else f" (Conf: {clade.confidence})"
-
-        node_plot_labels.append(label_on_plot)
-        node_hover_texts.append(hover_text)
-
-        # Draw lines to parent for rectangular phylogram
-        clade_parent_for_drawing = parents_for_drawing.get(clade)
-        if clade_parent_for_drawing and clade_parent_for_drawing in node_positions:
-            x_parent, y_parent = node_positions[clade_parent_for_drawing]
-            
-            # 1. Horizontal line for the branch: from (x_parent, y_clade) to (x_clade, y_clade)
-            edge_x_coords.extend([x_parent, x_clade, None])
-            edge_y_coords.extend([y_clade, y_clade, None])
-            
-            # 2. Vertical line connecting parent's y-level to this branch's y-level, at parent's x:
-            #    from (x_parent, y_parent) to (x_parent, y_clade)
-            edge_x_coords.extend([x_parent, x_parent, None])
-            edge_y_coords.extend([y_parent, y_clade, None])
-
-    fig = go.Figure()
-
-    # Add Edges (Branches)
-    fig.add_trace(go.Scatter(
-        x=edge_x_coords, y=edge_y_coords,
-        mode='lines',
-        line=dict(color='slategray', width=1.5), # CORRECTED COLOR
-        hoverinfo='none'
-    ))
-
-    # Add Nodes and Tip Labels
-    node_colors = ['orange' if clade.is_terminal() else 'lightblue' for clade in node_positions.keys()]
-    
-    show_text_on_nodes = num_terminals <= 50 
-
-    fig.add_trace(go.Scatter(
-        x=node_x_plot, y=node_y_plot,
-        mode='markers' + ('+text' if show_text_on_nodes else ''),
-        text=[lbl if show_text_on_nodes else '' for lbl in node_plot_labels], 
-        textposition="middle right", 
-        textfont=dict(size=9),
-        marker=dict(size=6, color=node_colors, line=dict(width=0.5, color='darkslategrey')),
-        hovertext=node_hover_texts,
-        hoverinfo='text'
-    ))
-    
-    y_coords_all = [pos[1] for pos in node_positions.values()]
-    y_min_plot = min(y_coords_all) - 10 if y_coords_all else -10
-    y_max_plot = max(y_coords_all) + 10 if y_coords_all else 10
-    
-    effective_max_x = max(max_x_coord, 0.1)
-
-
-    fig.update_layout(
-        title_text="Phylogenetic Tree",
-        showlegend=False,
-        hovermode='closest',
-        margin=dict(b=20, l=20, r=150, t=40), 
-        xaxis=dict(
-            showgrid=False, zeroline=True, showticklabels=True,
-            title="Branch Length (Distance)",
-            range=[-effective_max_x * 0.05, effective_max_x * 1.25] 
-        ),
-        yaxis=dict(
-            showgrid=False, zeroline=False, showticklabels=False,
-            range=[y_min_plot, y_max_plot]
-        ),
-        height=max(400, num_terminals * 20 + 60), 
-        plot_bgcolor='white'
-    )
-    return fig
-
-# --- [Existing code from your snippet: msa_to_image, plot_msa_image, etc. up to init_session_state] ---
-def msa_to_image(alignment_text: str, format_str: str) -> tuple: # Renamed format to format_str
+def msa_to_image(alignment_text: str, format: str) -> tuple:
     """
     Converts Multiple Sequence Alignment (MSA) to numerical image data and amino acid array.
 
     Parameters:
         alignment_text (str): The MSA text in the specified format
-        format_str (str): The format of the MSA text (e.g., 'fasta', 'clustal')
+        format (str): The format of the MSA text (e.g., 'fasta', 'clustal')
 
     Returns:
         tuple: (msa_image, msa_letters) - numerical representation and letter representation
     """
     try:
-        alignment = AlignIO.read(StringIO(alignment_text), format_str)
+        alignment = AlignIO.read(StringIO(alignment_text), format)
     except Exception as e:
         st.error(f"An error occurred while parsing the MSA alignment: {e}")
         return None, None
@@ -376,7 +189,7 @@ def _plot_msa_image_matplotlib_subset(msa_image_subset: np.ndarray, msa_letters_
 
     buf = BytesIO()
     plt.savefig(buf, format="png", dpi=300, bbox_inches='tight')
-    plt.close(fig) # Close the figure to free memory
+    plt.close(fig)
     buf.seek(0)
     st.image(buf, caption="MSA Heatmap", use_container_width=True)
     return buf
@@ -385,65 +198,39 @@ def _plot_msa_image_matplotlib_subset(msa_image_subset: np.ndarray, msa_letters_
 def init_session_state():
     """
     Initialize session state variables if they don't exist.
-
     This function ensures all required session state variables are properly initialized
     to prevent KeyError exceptions and enable proper state tracking.
     """
-    # MSA-related variables
-    if 'msa_result' not in st.session_state:
-        st.session_state.msa_result = None
-    if 'mutations' not in st.session_state:
-        st.session_state.mutations = None
-    if 'msa_image' not in st.session_state:
-        st.session_state.msa_image = None
-    if 'msa_letters' not in st.session_state:
-        st.session_state.msa_letters = None
-    if 'consensus_data' not in st.session_state:
-        st.session_state.consensus_data = None
-    if 'alignment_text' not in st.session_state:
-        st.session_state.alignment_text = None
-    if 'pairwise_mutations' not in st.session_state:
-        st.session_state.pairwise_mutations = None
+    # Define the default values for session state variables
+    defaults = {
+        "msa_result": None,
+        "mutations": None,
+        "msa_image": None,
+        "msa_letters": None,
+        "consensus_data": None,
+        "alignment_text": None,
+        "pairwise_mutations": None,
+        "sequences": None,
+        "seq_type": None,
+        "last_file": None,
+        "last_tree_file": None,
+        "tree": None,
+        "tree_newick": None,
+        "converted_data": None,
+        "conversion_error": None,
+        "last_conversion_params": {},
+        "selected_seqs": None,
+        "last_msa_params": {},
+        "last_pairwise_params": {},
+        "last_text_hash": None,
+        "msa_tree": None,
+    }
 
-    # Input-related variables
-    if 'sequences' not in st.session_state:
-        st.session_state.sequences = None
-    if 'seq_type' not in st.session_state:
-        st.session_state.seq_type = None
-    if 'last_file' not in st.session_state:
-        st.session_state.last_file = None
-    if 'last_tree_file' not in st.session_state:
-        st.session_state.last_tree_file = None
-    if 'tree' not in st.session_state:
-        st.session_state.tree = None
-    if 'tree_ascii' not in st.session_state:
-        st.session_state.tree_ascii = None
-    if 'tree_newick' not in st.session_state:
-        st.session_state.tree_newick = None
+    # Initialize session state variables if they don't exist
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-    # Format conversion variables
-    if 'converted_data' not in st.session_state:
-        st.session_state.converted_data = None
-    if 'conversion_error' not in st.session_state:
-        st.session_state.conversion_error = None
-    if 'last_conversion_params' not in st.session_state:
-        st.session_state.last_conversion_params = {}
-
-    # Pairwise alignment variables
-    if 'selected_seqs' not in st.session_state:
-        st.session_state.selected_seqs = None
-
-    # MSA calculation state tracking
-    if 'last_msa_params' not in st.session_state:
-        st.session_state.last_msa_params = {}
-
-    # Pairwise alignment parameters tracking
-    if 'last_pairwise_params' not in st.session_state:
-        st.session_state.last_pairwise_params = {}
-
-    # Text input tracking
-    if 'last_text_hash' not in st.session_state:
-        st.session_state.last_text_hash = None
 
 def calculate_representative_sequence(alignment, threshold=0.7):
     """
@@ -456,39 +243,147 @@ def calculate_representative_sequence(alignment, threshold=0.7):
     Returns:
         tuple: (consensus_record, closest_record, min_differences, closest_seq_id)
     """
-    if not alignment or len(alignment) == 0: # Handle empty or invalid alignment
-        empty_seq = Seq("")
-        return (SeqRecord(empty_seq, id="Consensus", description="Consensus sequence"),
-                SeqRecord(empty_seq, id="N/A", description="Most representative sequence"),
-                0, "N/A")
-
+    # Calculate the consensus sequence
     summary = AlignInfo.SummaryInfo(alignment)
     consensus = summary.dumb_consensus(threshold=threshold, ambiguous='X')
-    consensus_seq_str = str(consensus)
+    consensus_seq = str(consensus)
 
-    def count_differences(seq1_str, seq2_str):
-        return sum(1 for a, b in zip(seq1_str, seq2_str) if a != b)
+    # Find the sequence closest to the consensus
+    def count_differences(seq1, seq2):
+        """Count the number of differences between two sequences."""
+        return sum(1 for a, b in zip(seq1, seq2) if a != b)
 
-    min_differences = float('inf')
-    closest_sequence_str = ""
-    closest_seq_id = alignment[0].id # Default to first sequence if no better one is found
+    min_differences = None
+    closest_sequence = None
+    closest_seq_id = None
 
     for record in alignment:
-        record_seq_str = str(record.seq)
-        differences = count_differences(consensus_seq_str, record_seq_str)
-        if differences < min_differences:
+        seq = str(record.seq)
+        differences = count_differences(consensus_seq, seq)
+
+        if (min_differences is None) or (differences < min_differences):
             min_differences = differences
-            closest_sequence_str = record_seq_str
+            closest_sequence = seq
             closest_seq_id = record.id
-    
-    if not closest_sequence_str and alignment : # Fallback if all were identical to consensus (min_diff=0 but vars not set)
-        closest_sequence_str = str(alignment[0].seq)
 
-
-    consensus_record = SeqRecord(Seq(consensus_seq_str), id="Consensus", description="Consensus sequence")
-    closest_record = SeqRecord(Seq(closest_sequence_str), id=closest_seq_id, description="Most representative sequence")
+    # Create SeqRecord objects
+    consensus_record = SeqRecord(Seq(consensus_seq), id="Consensus", description="Consensus sequence")
+    closest_record = SeqRecord(Seq(closest_sequence), id=closest_seq_id, description="Most representative sequence")
 
     return consensus_record, closest_record, min_differences, closest_seq_id
+
+
+def have_params_changed(current_params: dict, last_params_key: str) -> bool:
+    """
+    Checks if the current parameters are different from the last stored parameters.
+    """
+    return st.session_state.get(last_params_key) != current_params
+
+
+def reset_results(keys_to_reset: List[str]):
+    """
+    Resets specified session state variables to their default values.
+    """
+    for key in keys_to_reset:
+        if key.endswith('_params'):
+            st.session_state[key] = {}
+        else:
+            st.session_state[key] = None
+
+
+def handle_input(input_format: str) -> Tuple[Optional[List[SeqRecord]], Optional[Phylo.BaseTree], Optional[Any]]:
+    """
+    Handles user input for sequences and trees based on the selected format.
+    """
+    sequences = None
+    tree = None
+    uploaded_file = None
+
+    if input_format == "Text (FASTA)":
+        seq_text = st.sidebar.text_area(
+            "Paste Sequences Here (FASTA Format)",
+            height=250,
+            placeholder=">Sequence1\nATGCGTA...\n>Sequence2\nATGCGTC...",
+            help="Enter your sequences in FASTA format"
+        )
+        if seq_text:
+            current_hash = hash(seq_text)
+            if 'last_text_hash' not in st.session_state or st.session_state.last_text_hash != current_hash:
+                st.session_state.last_text_hash = current_hash
+                sequences, error = parse_sequences_from_text(seq_text)
+                if error:
+                    st.sidebar.error(error)
+                else:
+                    st.sidebar.success(f"Successfully loaded {len(sequences)} sequences.")
+                    st.session_state.sequences = sequences
+            else:
+                sequences = st.session_state.sequences
+    elif input_format in ["PDB", "mmCIF"]:
+        uploaded_files = st.sidebar.file_uploader(
+            f"Upload {input_format} File(s)",
+            type=get_file_extensions(input_format),
+            key=f"uploader_{input_format}",
+            help=f"Upload one or more {input_format} files to extract protein sequences",
+            accept_multiple_files=True
+        )
+        if uploaded_files:
+            # Process multiple files
+            all_sequences = []
+            for uploaded_file in uploaded_files:
+                sequences, error = parse_sequences_from_structure(uploaded_file, input_format)
+                if error:
+                    st.sidebar.error(f"Error in file {uploaded_file.name}: {error}")
+                else:
+                    all_sequences.extend(sequences)
+
+            if all_sequences:
+                st.sidebar.success(f"Successfully extracted {len(all_sequences)} sequences from {len(uploaded_files)} file(s).")
+                st.session_state.sequences = all_sequences
+        else:
+            # Clear sequences if no files are uploaded
+            if 'sequences' in st.session_state:
+                st.session_state.sequences = None
+    elif input_format == "Newick":
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload Newick Tree File",
+            type=["nwk", "newick", "tree"],
+            key="uploader_newick",
+            help="Upload a Newick format tree file for visualization"
+        )
+        if uploaded_file:
+            if 'last_tree_file' not in st.session_state or st.session_state.last_tree_file != uploaded_file.name:
+                st.session_state.last_tree_file = uploaded_file.name
+                try:
+                    tree = Phylo.read(uploaded_file, "newick")
+                    st.session_state.tree = tree
+                    st.sidebar.success("Successfully loaded Newick tree.")
+                    # Reset tree visualization cache
+                    if 'tree_newick' in st.session_state: del st.session_state.tree_newick
+                except Exception as e:
+                    st.sidebar.error(f"Error reading Newick file: {e}")
+            else:
+                tree = st.session_state.tree
+    else:
+        uploaded_file = st.sidebar.file_uploader(
+            f"Upload {input_format} File",
+            type=get_file_extensions(input_format),
+            key=f"uploader_{input_format}",
+            help=f"Upload sequence file in {input_format} format"
+        )
+        if uploaded_file:
+            if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
+                st.session_state.last_file = uploaded_file.name
+                sequences, error = parse_sequences_from_file(uploaded_file, input_format)
+                if error:
+                    st.sidebar.error(error)
+                else:
+                    st.sidebar.success(f"Successfully loaded {len(sequences)} sequences.")
+                    st.session_state.sequences = sequences
+            else:
+                sequences = st.session_state.sequences
+
+    return sequences, tree, uploaded_file
+
 
 def main():
     st.set_page_config(page_title="Advanced Sequence Alignment Ability", layout="wide")
@@ -512,113 +407,20 @@ def main():
     st.sidebar.header("📥 Upload and Settings")
     input_format = st.sidebar.selectbox(
         "Select Input Format",
-        ("Text (FASTA)", "FASTA", "Clustal", "Phylip", "EMBL", "GenBank", "Newick", "PDB", "mmCIF"),
+        ("Text (FASTA)", "FASTA", "Clustal", "GenBank", "Newick", "PDB", "mmCIF"),
         help="Choose the format of your input sequences."
     )
 
-    sequences = None
-    tree_uploaded = None # For uploaded Newick tree
-    uploaded_file = None
+    sequences, tree, uploaded_file = handle_input(input_format)
 
-    if input_format == "Text (FASTA)":
-        seq_text = st.sidebar.text_area(
-            "Paste Sequences Here (FASTA Format)", height=250,
-            placeholder=">Sequence1\nATGCGTA...\n>Sequence2\nATGCGTC...",
-            help="Enter your sequences in FASTA format"
-        )
-        if seq_text:
-            current_hash = hash(seq_text)
-            if st.session_state.get('last_text_hash') != current_hash:
-                st.session_state.last_text_hash = current_hash
-                sequences, error = parse_sequences_from_text(seq_text)
-                if error: st.sidebar.error(error)
-                else:
-                    st.sidebar.success(f"Successfully loaded {len(sequences)} sequences.")
-                    st.session_state.sequences = sequences
-            sequences = st.session_state.get('sequences')
-    elif input_format in ["PDB", "mmCIF"]:
-        uploaded_file = st.sidebar.file_uploader(
-            "Upload PDB/mmCIF File",
-            type=get_file_extensions(input_format),
-            key=f"uploader_{input_format}",
-            help="Upload a PDB or mmCIF file to extract protein sequences"
-        )
-        if uploaded_file:
-            try:
-                # Only process if file is new or changed
-                file_changed = ('last_file' not in st.session_state or
-                               st.session_state.last_file != uploaded_file.name)
-
-                if file_changed:
-                    st.session_state.last_file = uploaded_file.name
-                    sequences, error = parse_sequences_from_structure(uploaded_file, input_format)
-                    if error:
-                        st.sidebar.error(error)
-                    else:
-                        st.sidebar.success(f"Successfully extracted {len(sequences)} sequences from the uploaded file.")
-                        st.session_state.sequences = sequences
-                else:
-                    sequences = st.session_state.sequences
-            except Exception as e:
-                st.sidebar.error(f"Error parsing {input_format} file: {e}")
-    elif input_format == "Newick":
-        uploaded_file = st.sidebar.file_uploader("Upload Newick Tree File", type=["nwk", "newick", "tree", "tre"], key="uploader_newick")
-        if uploaded_file:
-            try:
-                # Only process if file is new or changed
-                file_changed = ('last_tree_file' not in st.session_state or
-                               st.session_state.last_tree_file != uploaded_file.name)
-
-                if file_changed:
-                    st.session_state.last_tree_file = uploaded_file.name
-                    tree = Phylo.read(uploaded_file, "newick")
-                    st.session_state.tree = tree
-
-                    # Reset tree visualization cache
-                    if 'tree_ascii' in st.session_state:
-                        del st.session_state.tree_ascii
-                    if 'tree_newick' in st.session_state:
-                        del st.session_state.tree_newick
-                else:
-                    tree = st.session_state.tree
-
-                st.sidebar.success("Successfully loaded Newick tree.")
-            except Exception as e:
-                st.sidebar.error(f"Error reading Newick file: {e}")
-    else:
-        uploaded_file = st.sidebar.file_uploader(
-            "Upload Sequence File",
-            type=get_file_extensions(input_format),
-            key=f"uploader_{input_format}",
-            help=f"Upload sequence file in {input_format} format"
-        )
-        if uploaded_file:
-            try:
-                # Only process if file is new or changed
-                file_changed = ('last_file' not in st.session_state or
-                               st.session_state.last_file != uploaded_file.name)
-
-                if file_changed:
-                    st.session_state.last_file = uploaded_file.name
-                    sequences, error = parse_sequences_from_file(uploaded_file, input_format)
-                    if error:
-                        st.sidebar.error(error)
-                    else:
-                        st.sidebar.success(f"Successfully loaded {len(sequences)} sequences.")
-                        st.session_state.sequences = sequences
-                else:
-                    sequences = st.session_state.sequences
-            except Exception as e:
-                st.sidebar.error(f"Error reading file: {e}")
-
-    # Get sequences from session state if available
+    # Retrieve from session state if not loaded from input
     if sequences is None and 'sequences' in st.session_state:
         sequences = st.session_state.sequences
-
     if tree is None and 'tree' in st.session_state:
         tree = st.session_state.tree
 
-    if (sequences and len(sequences) > 0) or input_format == "Newick":
+    if (sequences and len(sequences) > 0) or tree:
+        seq_type = None
         if sequences:
             seq_type = st.sidebar.selectbox(
                 "🔬 Select Sequence Type",
@@ -626,147 +428,205 @@ def main():
                 help="Choose whether your sequences are DNA or Protein.",
                 index=1
             )
-
-            # Only update the session state if the selection has changed
             if 'seq_type' not in st.session_state or st.session_state.seq_type != seq_type:
                 st.session_state.seq_type = seq_type
-                # If sequence type changes, invalidate previous results
-                st.session_state.msa_result = None
-                st.session_state.mutations = None
-                st.session_state.msa_image = None
-                st.session_state.msa_letters = None
-                st.session_state.consensus_data = None
-                st.session_state.alignment_text = None
-                st.session_state.pairwise_mutations = None
-                st.session_state.last_msa_params = {}
-                st.session_state.last_pairwise_params = {}
-        else:
-            seq_type = st.session_state.seq_type if 'seq_type' in st.session_state else None
+                # Invalidate results if sequence type changes
+                keys_to_reset = [
+                    'msa_result', 'mutations', 'msa_image', 'msa_letters',
+                    'consensus_data', 'alignment_text', 'pairwise_mutations',
+                    'last_msa_params', 'last_pairwise_params'
+                ]
+                reset_results(keys_to_reset)
 
-        if sequences and input_format not in ["PDB", "mmCIF"]:
-            alignment_mode = st.sidebar.selectbox(
-                "🛠️ Select Alignment Mode",
-                ("Pairwise", "MSA", "Convert Formats"),
-                help="Choose the type of analysis you want to perform."
-            )
-        elif sequences and input_format in ["PDB", "mmCIF"]:
-            alignment_mode = None
-        else:
+        alignment_mode = None
+        if sequences:
+            options = ("Pairwise", "MSA", "Convert Formats", "Phylogenetic Tree")
+            if input_format in ["PDB", "mmCIF"]:
+                options = ("Extracted Sequences", "Phylogenetic Tree")
+            alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options)
+        elif tree:
             alignment_mode = "Phylogenetic Tree"
 
-        if sequences:
-            if input_format in ["PDB", "mmCIF"]:
-                st.header("📄 Extracted FASTA Sequences")
-                fasta_io = StringIO()
-                SeqIO.write(sequences, fasta_io, "fasta")
-                fasta_str = fasta_io.getvalue()
-                st.text_area("FASTA Sequences", value=fasta_str, height=500)
-                file_basename = os.path.splitext(os.path.basename(uploaded_file.name))[0]
-                st.download_button(
-                    label="📥 Download FASTA",
-                    data=fasta_str,
-                    file_name=f"{file_basename}_sequences.fasta",
-                    mime="text/plain"
-                )
-            else:
-                if alignment_mode == "Pairwise":
-                    pairwise_alignment_section(sequences, seq_type)
-                elif alignment_mode == "MSA":
-                    msa_section(sequences, seq_type)
-                elif alignment_mode == "Convert Formats":
-                    format_conversion_section(sequences, input_format)
-        else:
-            if alignment_mode == "Phylogenetic Tree":
+        if alignment_mode == "Extracted Sequences":
+            st.header("📄 Extracted FASTA Sequences")
+            fasta_io = StringIO()
+            SeqIO.write(sequences, fasta_io, "fasta")
+            fasta_str = fasta_io.getvalue()
+            st.text_area("FASTA Sequences", value=fasta_str, height=500)
+
+            file_name = "extracted_sequences.fasta"
+            # The 'uploaded_file' variable is only available for single file uploads.
+            # For multiple files, we use a generic name.
+            if uploaded_file and hasattr(uploaded_file, 'name'):
+                 file_name = f"{os.path.splitext(os.path.basename(uploaded_file.name))[0]}_sequences.fasta"
+
+            st.download_button(label="📥 Download FASTA", data=fasta_str, file_name=file_name, mime="text/plain")
+        elif alignment_mode == "Pairwise":
+            pairwise_alignment_section(sequences, seq_type)
+        elif alignment_mode == "MSA":
+            msa_section(sequences, seq_type)
+        elif alignment_mode == "Convert Formats":
+            format_conversion_section(sequences, input_format)
+        elif alignment_mode == "Phylogenetic Tree":
+            if tree:
                 phylogenetic_tree_section(tree)
+            elif sequences:
+                with st.spinner("Building phylogenetic tree..."):
+                    new_tree = build_phylogenetic_tree(sequences, seq_type)
+                    if new_tree:
+                        st.session_state.tree = new_tree
+                        if 'tree_ascii' in st.session_state: del st.session_state.tree_ascii
+                        if 'tree_newick' in st.session_state: del st.session_state.tree_newick
+                        phylogenetic_tree_section(new_tree)
+                    else:
+                        st.error("Could not build the phylogenetic tree.")
     else:
         st.info("Please upload sequences or a Newick tree in the sidebar to begin.")
 
+
+# Define amino acid 3-letter to 1-letter mapping
 amino_acid_map = {
     "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C",
     "GLN": "Q", "GLU": "E", "GLY": "G", "HIS": "H", "ILE": "I",
     "LEU": "L", "LYS": "K", "MET": "M", "PHE": "F", "PRO": "P",
     "SER": "S", "THR": "T", "TRP": "W", "TYR": "Y", "VAL": "V",
-    "SEC": "U", "PYL": "O", "ASX": "B", "GLX": "Z", "XLE": "J", "XAA": "X", # XAA for unknown
-    "MSE": "M", "UNK": "X", "MLE": "L", "CSD": "C", "HYP": "P",
-    "KCX": "K", "CSO": "C", "TPO": "T", "SEP": "S", "MLY": "K",
-    "M3L": "K", "OCS": "C", "PTR": "Y", "PCA": "E", "SAC": "S", "MLZ": "K"
+    # Non-standard amino acids
+    "SEC": "U", "PYL": "O", "ASX": "B", "GLX": "Z", "XLE": "J",
+    "MSE": "M",  # Selenomethionine
+    "UNK": "X",  # Unknown
+    # Modified residues - map to their standard counterparts
+    "MLE": "L", "CSD": "C", "HYP": "P", "KCX": "K", "CSO": "C",
+    "TPO": "T", "SEP": "S", "MLY": "K", "M3L": "K", "OCS": "C",
+    "PTR": "Y", "PCA": "E", "SAC": "S", "MLZ": "K"
 }
 
+
 def get_file_extensions(format_name):
+    """
+    Return appropriate file extensions based on the selected format.
+
+    Parameters:
+        format_name (str): Name of the file format
+
+    Returns:
+        list: List of file extensions associated with the format
+    """
     format_extensions = {
         "FASTA": ["fasta", "fa", "fna", "ffn", "faa", "frn", "fsa", "seq"],
         "Clustal": ["clustal", "aln", "clw"],
         "GenBank": ["gb", "gbk", "genbank"],
-        "Newick": ["nwk", "newick", "tree", "tre"], # Added tre
+        "Newick": ["nwk", "newick", "tree"],
         "PDB": ["pdb", "ent"],
-        "mmCIF": ["cif", "mmcif", "mcif"]
+        "mmCIF": ["cif", "mmcif", "mcif"]  # Added mcif as alternative extension
     }
     return format_extensions.get(format_name, [])
 
+
 def parse_sequences_from_text(text):
+    """
+    Parse sequences from pasted text in FASTA format.
+
+    Parameters:
+        text (str): FASTA formatted text with sequences
+
+    Returns:
+        tuple: (sequences, error) - List of sequence records or None, and error message or None
+    """
     try:
         normalized_text = text.replace('\r\n', '\n').replace('\r', '\n')
-        lines = [line.strip() for line in normalized_text.split('\n') if line.strip()] # Remove empty lines
+        lines = [line.strip() for line in normalized_text.split('\n') if line.strip() != '']
         cleaned_text = '\n'.join(lines)
         if not cleaned_text.startswith('>'):
-            return None, "FASTA format error: Must start with '>'. Please check your input."
+            return None, "FASTA format should start with '>'. Please check your input."
         seq_io = StringIO(cleaned_text)
         sequences = list(SeqIO.parse(seq_io, "fasta"))
         if not sequences:
-            return None, "No valid FASTA sequences found. Please check sequence content."
-        
+            return None, "No valid FASTA sequences found. Please check your input."
         sequence_ids = set()
-        for seq_rec in sequences:
-            if not seq_rec.id: return None, "Found a sequence without an ID. All sequences must have an ID."
-            if seq_rec.id in sequence_ids:
-                return None, f"Duplicate sequence ID: '{seq_rec.id}'. IDs must be unique."
-            sequence_ids.add(seq_rec.id)
-            if not str(seq_rec.seq).strip(): # Check for empty sequence string
-                return None, f"Sequence '{seq_rec.id}' is empty. Please provide sequence data."
+        for seq in sequences:
+            if seq.id in sequence_ids:
+                return None, f"Duplicate sequence ID found: '{seq.id}'. Each sequence must have a unique ID."
+            sequence_ids.add(seq.id)
+            if not str(seq.seq).strip():
+                return None, f"Sequence '{seq.id}' is empty. Please provide valid sequences."
         return sequences, None
     except Exception as e:
-        # traceback.print_exc()
-        return None, f"Error parsing text input as FASTA: {e}. Ensure correct FASTA format."
+        return None, f"An error occurred while parsing the text input: {e}"
+
 
 def parse_sequences_from_file(file, format_name):
+    """
+    Parse sequences from an uploaded file based on the selected format.
+
+    Parameters:
+        file: Uploaded file object
+        format_name (str): Format of the file
+
+    Returns:
+        tuple: (sequences, error) - List of sequence records or None, and error message or None
+    """
     try:
-        file.seek(0) # Reset file pointer
-        file_content_str = file.read().decode("utf-8", errors='replace') # Handle potential decoding errors
-        seq_io = StringIO(file_content_str)
-        
+        if format_name.lower() == "newick":
+            return None, "Newick format is for phylogenetic trees, not sequences."
+        file.seek(0)
+        file_content = file.read().decode("utf-8")
+        seq_io = StringIO(file_content)
         sequences = list(SeqIO.parse(seq_io, format_name.lower()))
         if not sequences:
             return None, f"No sequences found in the uploaded {format_name} file."
+
+        sequence_ids = set()
+        for seq in sequences:
+            if seq.id in sequence_ids:
+                return None, f"Duplicate sequence ID found: '{seq.id}'. Each sequence must have a unique ID."
+            sequence_ids.add(seq.id)
+            if not str(seq.seq).strip():
+                return None, f"Sequence '{seq.id}' is empty. Please provide valid sequences."
+
+        if format_name.lower() == 'clustal':
+            for seq_record in sequences:
+                seq_record.seq = seq_record.seq.ungap("-")
+
         return sequences, None
     except Exception as e:
-        # traceback.print_exc()
-        return None, f"Error parsing {format_name} file: {e}. Ensure correct format and encoding (UTF-8 recommended)."
+        return None, f"Error parsing {format_name} file: {e}"
 
 
 def parse_sequences_from_structure(file, format_name):
+    """
+    Parse sequences from PDB or mmCIF structure files.
+
+    Parameters:
+        file: Uploaded file object
+        format_name (str): Format of the file ('PDB' or 'mmCIF')
+
+    Returns:
+        tuple: (sequences, error) - List of sequence records or None, and error message or None
+    """
     try:
         file.seek(0)
-        file_content = file.read() # Read as bytes first
-        file_basename = os.path.splitext(os.path.basename(file.name))[0] if file.name else "structure"
+        file_content = file.read()
+        file_basename = os.path.splitext(os.path.basename(file.name))[0]
 
-        # Use temp file for Biopython parsers as they often expect file paths
-        temp_suffix = f".{format_name.lower()}"
-        with tempfile.NamedTemporaryFile(delete=False, mode='wb', suffix=temp_suffix) as temp_file_obj: # Write as bytes
-            temp_file_obj.write(file_content)
-            temp_filepath = temp_file_obj.name
-        
-        structure = None
+        # Use temporary files for reliable parsing
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{format_name.lower()}") as temp_file:
+            temp_file.write(file_content)
+            temp_filepath = temp_file.name
+
         try:
-            parser_class = PDBParser if format_name == "PDB" else MMCIFParser
-            parser = parser_class(QUIET=True)
-            structure = parser.get_structure(file_basename, temp_filepath)
-        except Exception as e_parse_struct:
-            os.unlink(temp_filepath) # Clean up temp file
-            return None, f"Failed to parse {format_name} structure: {e_parse_struct}"
+            # Parse the structure
+            if format_name == "PDB":
+                parser = PDBParser(QUIET=True)
+                structure = parser.get_structure(file_basename, temp_filepath)
+            elif format_name == "mmCIF":
+                parser = MMCIFParser(QUIET=True)
+                structure = parser.get_structure(file_basename, temp_filepath)
+            else:
+                return None, f"Unsupported format: {format_name}"
 
-        extracted_sequences = []
-        ppb = PPBuilder()
-        processed_chain_ids_model_specific = set() # To avoid re-processing same chain in a model
+            # Extract sequences using multiple methods
+            sequences = []
+            ppb = PPBuilder()
 
             with st.sidebar.expander("Structure processing details"):
                 for model_idx, model in enumerate(structure, 1):
@@ -827,6 +687,13 @@ def parse_sequences_from_structure(file, format_name):
             if not sequences:
                 return None, "No protein sequences could be extracted from the structure file."
 
+            # Check for duplicate sequence IDs
+            sequence_ids = set()
+            for seq in sequences:
+                if seq.id in sequence_ids:
+                    return None, f"Duplicate sequence ID found: '{seq.id}'. Each sequence must have a unique ID."
+                sequence_ids.add(seq.id)
+
             return sequences, None
         finally:
             # Clean up temporary file
@@ -862,10 +729,34 @@ def save_msa_to_fasta(msa: List[PyFAMSASequence], output_path: str) -> bool:
         print(f"MSA successfully saved to {output_path}")
         return True
     except Exception as e:
-        # traceback.print_exc() # For developer debugging
-        if 'temp_filepath' in locals() and os.path.exists(temp_filepath):
-            os.unlink(temp_filepath)
-        return None, f"An error occurred while processing the {format_name} file: {e}"
+        print(f"An error occurred while saving MSA to FASTA: {e}")
+        return False
+
+
+def get_msa_as_fasta(msa: List[PyFAMSASequence]) -> str:
+    """
+    Converts pyFAMSA MSA output to a FASTA-formatted string compatible with Biopython.
+
+    Parameters:
+        msa (List[PyFAMSASequence]): List of aligned sequences from pyFAMSA
+
+    Returns:
+        str: FASTA-formatted string
+    """
+    try:
+        seq_records = []
+        for seq in msa:
+            seq_id = seq.id.decode('utf-8')
+            sequence = seq.sequence.decode('utf-8')
+            record = SeqRecord(Seq(sequence), id=seq_id, description="")
+            seq_records.append(record)
+        fasta_io = StringIO()
+        SeqIO.write(seq_records, fasta_io, "fasta")
+        fasta_content = fasta_io.getvalue()
+        return fasta_content
+    except Exception as e:
+        st.error(f"An error occurred while converting MSA to FASTA: {e}")
+        return ""
 
 
 import re
@@ -916,68 +807,110 @@ def convert_msa_mutations_to_csv(mutations: Dict[str, List[Tuple[int, str, str]]
 
 
 def pairwise_alignment_section(sequences, seq_type):
+    """
+    Handles the pairwise alignment workflow including UI and computation.
+
+    Parameters:
+        sequences: List of sequence records to align
+        seq_type (str): Type of sequences ('DNA' or 'Protein')
+    """
     st.header("🔀 Pairwise Alignment")
+
     if len(sequences) < 2:
         st.warning("Please upload at least two sequences for pairwise alignment.")
         return
 
-    align_mode_pairwise = st.selectbox(
-        "Select Alignment Mode", ("Global", "Local", "Overlap"),
-        help="Global: Align entire sequences. Local: Find best local regions. Overlap: Allow end gaps.",
-        key="pairwise_align_mode"
+    align_mode = st.selectbox(
+        "Select Alignment Mode",
+        ("Global", "Local", "Overlap"),
+        help="Global: Align entire sequences. Local: Find best local regions. Overlap: Allow end gaps."
     )
+
     seq_names = [seq.id for seq in sequences]
-    col1_pw, col2_pw = st.columns(2)
-    
+
+    # Replace multiselect with two separate selectboxes
+    col1, col2 = st.columns(2)
+
+    # Default to first sequence or previously selected
     default_ref_idx = 0
-    if 'reference_id_pw' in st.session_state and st.session_state.reference_id_pw in seq_names:
-        default_ref_idx = seq_names.index(st.session_state.reference_id_pw)
-    
-    with col1_pw:
-        reference_id_pw = st.selectbox("Select Reference Sequence", seq_names, index=default_ref_idx, key="reference_seq_select_pw")
-    
-    # Ensure target is different from reference
-    available_targets = [name for name in seq_names if name != reference_id_pw]
-    if not available_targets:
-        st.warning("Only one unique sequence ID available. Cannot perform pairwise alignment.")
+    if 'reference_id' in st.session_state and st.session_state.reference_id in seq_names:
+        default_ref_idx = seq_names.index(st.session_state.reference_id)
+
+    with col1:
+        reference_id = st.selectbox(
+            "Select Reference Sequence",
+            seq_names,
+            index=default_ref_idx,
+            key="reference_seq_select",
+            help="First sequence for alignment"
+        )
+
+    # Default to second sequence or previously selected
+    default_target_idx = min(1, len(seq_names)-1)  # Default to second sequence if available
+    if 'target_id' in st.session_state and st.session_state.target_id in seq_names:
+        default_target_idx = seq_names.index(st.session_state.target_id)
+
+    with col2:
+        target_id = st.selectbox(
+            "Select Target Sequence",
+            seq_names,
+            index=default_target_idx,
+            key="target_seq_select",
+            help="Second sequence for alignment"
+        )
+
+    # Store the current selections in session state
+    st.session_state.reference_id = reference_id
+    st.session_state.target_id = target_id
+
+    # Check if selection has changed from last time
+    selection_changed = ('last_selected_seqs' not in st.session_state or
+                         st.session_state.last_selected_seqs != (reference_id, target_id))
+
+    if selection_changed:
+        # Reset alignment results when selection changes
+        if 'alignment_text' in st.session_state:
+            st.session_state.alignment_text = None
+            st.session_state.pairwise_mutations = None
+        # Reset the parameters tracking
+        if 'last_pairwise_params' in st.session_state:
+            st.session_state.last_pairwise_params = {}
+        st.session_state.last_selected_seqs = (reference_id, target_id)
+
+    c1, c2 = st.columns(2)
+    open_gap_score = c1.number_input(
+        "Open Gap Score",
+        value=-0.5,
+        step=0.1,
+        help="Penalty for opening a gap in the alignment. More negative = higher penalty."
+    )
+
+    extend_gap_score = c2.number_input(
+        "Extend Gap Score",
+        value=-0.1,
+        step=0.1,
+        help="Penalty for extending an existing gap. More negative = higher penalty."
+    )
+
+    if reference_id == target_id:
+        st.warning("Please select two different sequences for alignment.")
         return
-        
-    default_target_idx_in_available = 0
-    if 'target_id_pw' in st.session_state and st.session_state.target_id_pw in available_targets:
-         default_target_idx_in_available = available_targets.index(st.session_state.target_id_pw)
 
-    with col2_pw:
-        target_id_pw = st.selectbox("Select Target Sequence", available_targets, index=default_target_idx_in_available, key="target_seq_select_pw")
+    seq1 = next(seq for seq in sequences if seq.id == reference_id)
+    seq2 = next(seq for seq in sequences if seq.id == target_id)
 
-    st.session_state.reference_id_pw = reference_id_pw # Store for persistence
-    st.session_state.target_id_pw = target_id_pw
-
-    selection_changed_pw = (st.session_state.get('last_selected_seqs_pw') != (reference_id_pw, target_id_pw))
-    if selection_changed_pw: # Reset results if selection changes
-        st.session_state.alignment_text = None 
-        st.session_state.pairwise_mutations = None
-        st.session_state.last_pairwise_params = {} # Force re-calc
-        st.session_state.last_selected_seqs_pw = (reference_id_pw, target_id_pw)
-
-    c1_gap, c2_gap = st.columns(2)
-    open_gap_score = c1_gap.number_input("Open Gap Score", value=-0.5, step=0.1, help="Penalty for opening a gap.")
-    extend_gap_score = c2_gap.number_input("Extend Gap Score", value=-0.1, step=0.1, help="Penalty for extending a gap.")
-
-    seq1_pw = next((s for s in sequences if s.id == reference_id_pw), None)
-    seq2_pw = next((s for s in sequences if s.id == target_id_pw), None)
-
-    if not seq1_pw or not seq2_pw: # Should not happen if selectbox logic is correct
-        st.error("Selected sequence(s) not found. Please re-select.")
-        return
-
-    current_params_pw = {
-        'ref_id': reference_id_pw, 'target_id': target_id_pw, 'seq_type': seq_type,
-        'align_mode': align_mode_pairwise.lower(), 'open_gap': open_gap_score, 'extend_gap': extend_gap_score
+    # Create a unique parameter set to detect changes
+    current_params = {
+        'ref_id': reference_id,
+        'target_id': target_id,
+        'seq_type': seq_type,
+        'align_mode': align_mode.lower(),
+        'open_gap_score': open_gap_score,
+        'extend_gap_score': extend_gap_score
     }
 
     # Check if parameters have changed
-    params_changed = ('last_pairwise_params' not in st.session_state or
-                      st.session_state.last_pairwise_params != current_params)
+    params_changed = have_params_changed(current_params, 'last_pairwise_params')
 
     run_alignment = st.button("Run Pairwise Alignment")
 
@@ -985,20 +918,21 @@ def pairwise_alignment_section(sequences, seq_type):
     if run_alignment or (st.session_state.get('alignment_text') is not None and not params_changed):
         # Only recalculate if parameters changed or explicitly requested
         if run_alignment or params_changed:
-            with st.spinner("Aligning sequences..."):
+            with st.spinner("Performing pairwise alignment..."):
                 alignment_text, mutations = perform_pairwise_alignment(
                     seq1, seq2, seq_type, align_mode.lower(), open_gap_score, extend_gap_score
                 )
-                st.session_state.alignment_text = alignment_text_res
-                st.session_state.pairwise_mutations = mutations_res
-                st.session_state.last_pairwise_params = current_params_pw
-    
-    if st.session_state.get('alignment_text'):
+                st.session_state.alignment_text = alignment_text
+                st.session_state.pairwise_mutations = mutations
+                st.session_state.last_pairwise_params = current_params
+
         st.subheader("🧬 Alignment Result")
         st.code(st.session_state.alignment_text)
+
         st.subheader("🔍 Point Mutations Relative to Reference")
-        if st.session_state.get('pairwise_mutations'):
-            st.write(f"**Reference:** `{reference_id_pw}`, **Target:** `{target_id_pw}`")
+        if st.session_state.pairwise_mutations:
+            st.write(f"**Reference Sequence:** `{reference_id}`")
+            st.write(f"**Target Sequence:** `{target_id}`")
             mutations_str = ', '.join(st.session_state.pairwise_mutations)
             st.write(f"**Mutations:** {mutations_str}")
 
@@ -1026,68 +960,108 @@ def pairwise_alignment_section(sequences, seq_type):
                 showlegend=False
             )
             st.plotly_chart(fig, use_container_width=True)
+
+            csv_mutations = convert_mutations_to_csv(st.session_state.pairwise_mutations)
+            if csv_mutations:
+                st.download_button(
+                    label="📥 Download Mutations (CSV)",
+                    data=csv_mutations,
+                    file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv",
+                    mime="text/csv"
+                )
         else:
-            st.write("No point mutations detected or alignment/mutation analysis failed.")
-        st.download_button("📥 Download Alignment", st.session_state.alignment_text, f"pairwise_{reference_id_pw}_vs_{target_id_pw}.txt", key="download_pairwise")
+            st.write("No point mutations detected.")
+
+        st.download_button(
+            label="📥 Download Alignment",
+            data=st.session_state.alignment_text,
+            file_name=f"pairwise_alignment_{reference_id}_vs_{target_id}.txt",
+            mime="text/plain"
+        )
 
 
 def msa_section(sequences, seq_type):
-    st.header("📏 Multiple Sequence Alignment (MSA)")
-    st.info("Align multiple sequences to find conserved regions and evolutionary relationships. A phylogenetic tree can also be generated.")
+    """
+    Handles the Multiple Sequence Alignment (MSA) workflow including UI and computation.
 
-    if len(sequences) < 2: 
+    Parameters:
+        sequences: List of sequence records to align
+        seq_type (str): Type of sequences ('DNA' or 'Protein')
+    """
+    st.header("📏 Multiple Sequence Alignment (MSA)")
+    st.info(
+        "Multiple Sequence Alignment aligns three or more sequences together, "
+        "identifying conserved regions and structural similarities."
+    )
+
+    if len(sequences) < 2:
         st.warning("Please upload at least two sequences for MSA.")
         return
 
-    ref_seq_id_msa = st.selectbox(
+    ref_seq_id = st.selectbox(
         "Select Reference Sequence for Mutation Reporting",
-        [seq.id for seq in sequences], key="ref_seq_msa_select",
-        help="Mutations will be reported relative to this sequence."
+        [seq.id for seq in sequences],
+        key="ref_seq_select",
+        help="Mutations in other sequences will be reported relative to this sequence"
     )
+
     msa_output_format = st.selectbox(
-        "Select MSA Output Format", ("fasta", "clustal", "phylip", "stockholm"),
-        help="Format for MSA results and download."
+        "Select MSA Output Format",
+        ("fasta", "clustal", "phylip", "stockholm"),
+        help="Choose the format for saving the alignment results"
     )
-    plot_method_msa = st.selectbox(
-        "Select MSA Heatmap Plotting Method", ("Plotly (Interactive)", "Matplotlib (Static)"),
-        help="Choose how the MSA heatmap is displayed."
-    )
-    
-    generate_tree_checkbox = st.checkbox("Generate Phylogenetic Tree from MSA", value=False, key="gen_tree_cb_msa")
-    tree_build_method_selected = 'nj' 
-    if generate_tree_checkbox:
-        tree_build_method_selected = st.selectbox("Tree Construction Method (for generated tree)", 
-                                                  ["nj", "upgma"], index=0, key="msa_tree_method_select")
 
-    calculate_representative = st.checkbox("Calculate Most Representative Sequence (from MSA)", value=False)
-    consensus_threshold = 0.7
+    plot_method = st.selectbox(
+        "Select Plotting Method",
+        ("Plotly (Interactive)", "Matplotlib (Static)"),
+        help="Plotly provides interactive visualization. Matplotlib creates static images."
+    )
+
+    # Add option to calculate representative sequence
+    calculate_representative = st.checkbox(
+        "Calculate Most Representative Sequence",
+        help="Find the consensus sequence and sequence that best represents the entire alignment"
+    )
+
     if calculate_representative:
-        consensus_threshold = st.slider("Consensus Threshold for Representative Seq", 0.5, 1.0, 0.7, 0.05)
+        consensus_threshold = st.slider(
+            "Consensus Threshold",
+            0.5, 1.0, 0.7, 0.05,
+            help="Minimum fraction of sequences that must have the same residue at a position to be included in consensus"
+        )
 
+    # Create a unique parameter set to track MSA settings
     current_msa_params = {
-        'seq_ids': tuple(s.id for s in sequences), 'ref_id': ref_seq_id_msa, 'seq_type': seq_type,
-        'out_fmt': msa_output_format, 'calc_repr': calculate_representative,
-        'gen_tree': generate_tree_checkbox, 'tree_method': tree_build_method_selected if generate_tree_checkbox else None
+        'sequences_ids': tuple(seq.id for seq in sequences),
+        'ref_seq_id': ref_seq_id,
+        'seq_type': seq_type,
+        'msa_output_format': msa_output_format,
+        'calculate_representative': calculate_representative
     }
 
     if calculate_representative:
         current_msa_params['consensus_threshold'] = consensus_threshold
 
     # Check if MSA parameters have changed
-    msa_params_changed = ('last_msa_params' not in st.session_state or
-                         st.session_state.last_msa_params != current_msa_params)
+    msa_params_changed = have_params_changed(current_msa_params, 'last_msa_params')
 
-    if st.button("Run MSA Analysis", key="run_msa_btn"):
-        if msa_params_changed or not st.session_state.get('msa_result'):
-            with st.spinner("Performing MSA... This may take a moment."):
-                msa_result_text, mutations_dict = perform_msa(sequences, ref_seq_id_msa, seq_type, msa_output_format)
-                st.session_state.msa_result = msa_result_text
-                st.session_state.mutations = mutations_dict
+    run_msa = st.button("Run MSA")
+
+    # Use session state to store and retrieve MSA results
+    if run_msa or (st.session_state.msa_result is not None and not msa_params_changed):
+        # Only recalculate if parameters changed or explicitly requested
+        if run_msa or msa_params_changed:
+            with st.spinner("Performing MSA - this may take a moment for large datasets..."):
+                msa_result, mutations = perform_msa(sequences, ref_seq_id, seq_type, msa_output_format)
+                st.session_state.msa_result = msa_result
+                st.session_state.mutations = mutations
                 st.session_state.last_msa_params = current_msa_params
-                st.session_state.consensus_data = None 
-                st.session_state.phylogenetic_tree_from_msa = None 
 
-                if msa_result_text:
+                # Reset consensus data when running new MSA
+                st.session_state.consensus_data = None
+
+                # Generate image data for plotting
+                if msa_result:
                     try:
                         msa_image, msa_letters = msa_to_image(msa_result, msa_output_format)
                         st.session_state.msa_image = msa_image
@@ -1096,370 +1070,452 @@ def msa_section(sequences, seq_type):
                         st.error(f"Failed to generate MSA heatmap: {e}")
 
         if st.session_state.msa_result:
-            st.subheader("📄 MSA Result")
-            seqs_total = parse_sequences_from_text(st.session_state.msa_result)[0]
-            st.write(f"Total sequences: {len(seqs_total)}. MSA length: {len(seqs_total[0].seq)}")
+            tab_titles = ["Alignment & Heatmap", "Point Mutations", "Phylogenetic Tree"]
+            if calculate_representative:
+                tab_titles.insert(2, "Representative Sequence")
 
-            if st.session_state.msa_image is not None and st.session_state.msa_letters is not None:
-                plot_msa_image(st.session_state.msa_image, st.session_state.msa_letters, plot_method)
+            tabs = st.tabs(tab_titles)
 
-            st.subheader("🔍 Point Mutations Relative to Reference")
-            if st.session_state.mutations:
-                # Allow user to select which sequences to view mutations for
-                seq_ids = sorted(list(st.session_state.mutations.keys()))
+            with tabs[0]:
+                st.subheader("📄 MSA Result")
+                seqs_total, _ = parse_sequences_from_text(st.session_state.msa_result)
+                if seqs_total:
+                    st.write(f"Total sequences: {len(seqs_total)}. MSA length: {len(seqs_total[0].seq)}")
 
-                if len(seq_ids) > 0:
-                    # Add a "Select All" option if there are many sequences
-                    if len(seq_ids) > 10:
-                        select_all = st.checkbox(
-                            "Select all sequences",
-                            value=False,
-                            key="select_all_mutations",
-                            help="Show mutations for all sequences"
-                        )
+                if st.session_state.msa_image is not None and st.session_state.msa_letters is not None:
+                    plot_msa_image(st.session_state.msa_image, st.session_state.msa_letters, plot_method)
 
-                        if select_all:
-                            selected_seq_ids = seq_ids
-                        else:
-                            # Default to showing first few sequences if count is high
-                            default_selection = seq_ids[:min(5, len(seq_ids))]
-                            selected_seq_ids = st.multiselect(
-                                "Select sequences to view mutations for:",
-                                seq_ids,
-                                default=default_selection,
-                                key="mutation_sequence_selector",
-                                help="Choose which sequences to display mutations for"
-                            )
-                    else:
-                        # For fewer sequences, just show the multiselect with all selected by default
-                        selected_seq_ids = st.multiselect(
+                st.download_button(
+                    label="📥 Download MSA",
+                    data=st.session_state.msa_result,
+                    file_name=f"msa_alignment.{msa_output_format}",
+                    mime=f"text/{msa_output_format}"
+                )
+
+            with tabs[1]:
+                st.subheader("🔍 Point Mutations Relative to Reference")
+                if st.session_state.mutations:
+                    seq_ids = sorted(list(st.session_state.mutations.keys()))
+                    if seq_ids:
+                        select_all = st.checkbox("Select all sequences", value=True, key="select_all_mutations")
+                        selected_seq_ids = seq_ids if select_all else st.multiselect(
                             "Select sequences to view mutations for:",
                             seq_ids,
-                            default=seq_ids[:min(10, len(seq_ids))],
-                            key="mutation_sequence_selector",
-                            help="Choose which sequences to display mutations for"
+                            default=seq_ids[:min(5, len(seq_ids))],
+                            key="mutation_sequence_selector"
                         )
-
-                    if selected_seq_ids:
                         for seq_id in selected_seq_ids:
                             mut_list = st.session_state.mutations.get(seq_id, [])
                             if mut_list:
-                                # Each mutation tuple is (position, ref_base, variant)
-                                df = pd.DataFrame(mut_list, columns=["Position", "Reference", "Variant"])
-
                                 with st.expander(f"Mutations for {seq_id} ({len(mut_list)} mutations)"):
+                                    df = pd.DataFrame(mut_list, columns=["Position", "Reference", "Variant"])
                                     st.dataframe(df)
+                                    string_mutations = ', '.join([f"{ref}{pos}{var}" for pos, ref, var in mut_list])
+                                    st.write(f"**Mutations:** {string_mutations}")
 
-                                    # Plot mutations if there aren't too many
-                                    if len(mut_list) <= 300:  # Limit for performance
-                                        fig = go.Figure()
-                                        fig.add_trace(go.Scatter(
-                                            x=[pos for pos, _, _ in mut_list],
-                                            y=[1]*len(mut_list),
-                                            mode='markers',
-                                            marker=dict(size=8, color='red'),
-                                            text=[f"{ref}{pos}{var}" for pos, ref, var in mut_list],
-                                            hoverinfo='text'
-                                        ))
-                                        fig.update_layout(
-                                            title=f"Mutations in {seq_id}",
-                                            xaxis_title="Position in Reference Sequence",
-                                            yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                                            height=200,
-                                            margin=dict(l=20, r=20, t=30, b=20),
-                                            showlegend=False
-                                        )
-                                        st.plotly_chart(fig, use_container_width=True)
-                                        
-                                        # write the name of the sequence followed by the single point mutation
-                                        string_mutations = ', '.join([f"{ref}{pos}{var}" for pos, ref, var in mut_list])
-                                        st.write(f"**{seq_id}:** {string_mutations}")
-                                            
-                    else:
-                        st.info("Select at least one sequence to view mutations.")
+                    csv_mutations = convert_msa_mutations_to_csv(st.session_state.mutations)
+                    if csv_mutations:
+                        st.download_button(
+                            label="📥 Download All Mutations (CSV)",
+                            data=csv_mutations,
+                            file_name="msa_mutations.csv",
+                            mime="text/csv"
+                        )
                 else:
-                    st.info("No sequences with mutations detected.")
-            else:
-                st.write("No point mutations detected relative to the reference sequence.")
+                    st.write("No point mutations detected relative to the reference sequence.")
 
-            # Add representative sequence calculation if requested
             if calculate_representative:
-                # Only calculate if not already done or if user changes threshold
-                recalculate = (st.session_state.consensus_data is None or
-                              'threshold' not in st.session_state.consensus_data or
-                              st.session_state.consensus_data['threshold'] != consensus_threshold)
-
-                st.subheader("🧬 Representative Sequence Analysis")
-
-                if recalculate:
-                    with st.spinner("Calculating consensus and representative sequence..."):
-                        try:
-                            # Get alignment object from MSA result
+                with tabs[2]:
+                    st.subheader("🧬 Representative Sequence Analysis")
+                    recalculate = (st.session_state.consensus_data is None or
+                                  'threshold' not in st.session_state.consensus_data or
+                                  st.session_state.consensus_data['threshold'] != consensus_threshold)
+                    if recalculate:
+                        with st.spinner("Calculating consensus..."):
                             alignment = AlignIO.read(StringIO(st.session_state.msa_result), msa_output_format)
-
-                            # Calculate representative sequence with user-selected threshold
-                            consensus_record, closest_record, min_differences, closest_seq_id = calculate_representative_sequence(
-                                alignment, threshold=consensus_threshold
-                            )
-
-                            # Store in session state
+                            consensus_record, closest_record, min_diff, closest_seq_id = calculate_representative_sequence(alignment, threshold=consensus_threshold)
                             st.session_state.consensus_data = {
                                 'threshold': consensus_threshold,
                                 'consensus_record': consensus_record,
                                 'closest_record': closest_record,
-                                'min_differences': min_differences,
+                                'min_differences': min_diff,
                                 'closest_seq_id': closest_seq_id,
                                 'alignment_length': alignment.get_alignment_length(),
                                 'seq_count': len(alignment)
                             }
-                        except Exception as e:
-                            st.error(f"Failed to calculate representative sequence: {str(e)}")
-                            st.info("Try adjusting the consensus threshold or check if your sequences are properly aligned.")
 
-                # Display results if available
-                if st.session_state.consensus_data:
-                    data = st.session_state.consensus_data
-                    st.write(f"**Consensus threshold:** {data['threshold']}")
-                    st.write(f"**Number of sequences:** {data['seq_count']}")
-                    st.write(f"**Alignment length:** {data['alignment_length']} positions")
+                    if st.session_state.consensus_data:
+                        data = st.session_state.consensus_data
+                        st.write(f"**Consensus threshold:** {data['threshold']}")
+                        st.write(f"**Number of sequences:** {data['seq_count']}")
 
-                    col1, col2 = st.columns(2)
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("#### Consensus Sequence")
+                            st.code(f">{data['consensus_record'].id}\n{data['consensus_record'].seq}")
+                        with col2:
+                            st.markdown("#### Most Representative Sequence")
+                            st.write(f"**Sequence ID:** `{data['closest_seq_id']}`")
+                            st.write(f"**Differences from consensus:** {data['min_differences']}")
+                            st.code(f">{data['closest_record'].id}\n{data['closest_record'].seq}")
 
-                    with col1:
-                        st.markdown("### Consensus Sequence")
-                        st.info("Consensus shows the most common residue at each position based on the threshold")
-                        st.code(f">Consensus\n{data['consensus_record'].seq}")
+                        consensus_fasta = f">{data['consensus_record'].id}\n{data['consensus_record'].seq}\n>{data['closest_record'].id}\n{data['closest_record'].seq}"
+                        st.download_button(
+                            label="📥 Download Consensus/Representative (FASTA)",
+                            data=consensus_fasta,
+                            file_name="consensus_representative.fasta",
+                            mime="text/plain"
+                        )
 
-                    with col2:
-                        st.markdown("### Most Representative Sequence")
-                        st.info("This sequence is most similar to the consensus sequence")
-                        st.write(f"**Sequence ID:** `{data['closest_seq_id']}`")
-                        st.write(f"**Differences from consensus:** {data['min_differences']}")
-                        st.code(f">{data['closest_seq_id']}\n{data['closest_record'].seq}")
+            with tabs[-1]:
+                st.subheader("🌳 Phylogenetic Tree from MSA")
+                if st.button("Calculate Phylogenetic Tree from MSA"):
+                    with st.spinner("Building tree from MSA..."):
+                        alignment = AlignIO.read(StringIO(st.session_state.msa_result), msa_output_format)
+                        tree = build_tree_from_alignment(alignment, seq_type)
+                        if tree:
+                            st.session_state.msa_tree = tree
 
-                    # Create downloadable file with consensus and representative sequence
-                    consensus_fasta_io = StringIO()
-                    SeqIO.write([data['consensus_record'], data['closest_record']], consensus_fasta_io, "fasta")
-                    consensus_fasta = consensus_fasta_io.getvalue()
-
-                    st.download_button(
-                        label="📥 Download Consensus and Representative Sequence",
-                        data=consensus_fasta,
-                        file_name="consensus_and_representative.fasta",
-                        mime="text/plain"
-                    )
-
-            st.download_button(
-                label="📥 Download MSA",
-                data=st.session_state.msa_result,
-                file_name=f"msa_alignment.{msa_output_format}",
-                mime=f"text/{msa_output_format}"
-            )
+                if 'msa_tree' in st.session_state and st.session_state.msa_tree:
+                    phylogenetic_tree_section(st.session_state.msa_tree)
 
 
 def format_conversion_section(sequences, input_format):
+    """
+    Handles the sequence format conversion workflow.
+
+    Parameters:
+        sequences: List of sequence records to convert
+        input_format (str): Original format of the sequences
+    """
     st.header("🔄 Sequence Format Conversion")
-    st.info("Convert sequences between different file formats.")
+    st.info(
+        "Convert your sequences between different file formats. "
+        "This is useful for compatibility with different analysis abilities."
+    )
 
     conversion_output_format = st.selectbox(
-        "Select Output Format For Conversion",
-        ("fasta", "clustal", "phylip", "embl", "genbank"), 
-        key="conv_out_fmt_select"
+        "Select Output Format",
+        ("fasta", "clustal", "phylip", "embl", "genbank"),
+        help="Choose the desired format for the converted sequences"
     )
-    current_conv_params = {
-        'seq_ids': tuple(s.id for s in sequences), 
-        'in_fmt': input_format, 'out_fmt': conversion_output_format
+
+    # Create a hash of the current parameters
+    current_params = {
+        'sequences_ids': tuple(seq.id for seq in sequences),
+        'input_format': input_format,
+        'output_format': conversion_output_format
     }
 
     # Check if parameters have changed
-    params_changed = ('last_conversion_params' not in st.session_state or
-                      st.session_state.last_conversion_params != current_params)
+    params_changed = have_params_changed(current_params, 'last_conversion_params')
 
-    if st.button("Convert Format", key="convert_fmt_btn"):
-        if params_changed_conv or not st.session_state.get('converted_data'):
-            if input_format.lower() == "newick": 
-                st.warning("Newick is a tree format, cannot convert to sequence formats directly here.")
+    convert_button = st.button("Convert Format")
+
+    # Use session state to store conversion results
+    if 'converted_data' not in st.session_state:
+        st.session_state.converted_data = None
+        st.session_state.conversion_error = None
+
+    # Only run conversion if button is clicked or we have results and parameters haven't changed
+    if convert_button or (st.session_state.converted_data is not None and not params_changed):
+        # Only recalculate if parameters changed or explicitly requested
+        if convert_button or params_changed:
+            if input_format.lower() == "newick" and conversion_output_format.lower() != "newick":
+                st.warning("Newick format is a tree format and cannot be converted to sequence formats directly.")
                 st.session_state.converted_data = None
-                st.session_state.conversion_error = "Incompatible: Newick to sequence format."
+                st.session_state.conversion_error = "Incompatible formats"
             else:
-                with st.spinner("Converting..."):
-                    conv_data, conv_err = convert_format(sequences, conversion_output_format)
-                    st.session_state.converted_data = conv_data
-                    st.session_state.conversion_error = conv_err
-                    st.session_state.last_conversion_params = current_conv_params
-    
-    if st.session_state.get('converted_data'):
-        st.success("Conversion successful!")
-        st.text_area("Converted Sequences", st.session_state.converted_data, height=300)
-        st.download_button(
-            "📥 Download Converted File", st.session_state.converted_data,
-            f"converted_sequences.{conversion_output_format}",
-            mime=f"text/{conversion_output_format}", key="download_conv_btn"
-        )
-    elif st.session_state.get('conversion_error'):
-        st.error(f"Conversion failed: {st.session_state.conversion_error}")
+                with st.spinner("Converting format..."):
+                    converted_data, error = convert_format(sequences, conversion_output_format)
+                    st.session_state.converted_data = converted_data
+                    st.session_state.conversion_error = error
+                    st.session_state.last_conversion_params = current_params
+
+        # Display results if available
+        if st.session_state.converted_data:
+            st.success("Format conversion successful.")
+            st.text(st.session_state.converted_data)
+            st.download_button(
+                label="📥 Download Converted File",
+                data=st.session_state.converted_data,
+                file_name=f"converted_sequences.{conversion_output_format}",
+                mime=f"text/{conversion_output_format}"
+            )
+        elif st.session_state.conversion_error:
+            st.error(f"Format conversion failed: {st.session_state.conversion_error}")
 
 
 def phylogenetic_tree_section(tree):
     """
     Handles the phylogenetic tree visualization workflow.
-
-    Parameters:
-        tree: BioPython Tree object to visualize
     """
     st.header("🌳 Phylogenetic Tree")
-    st.info(
-        "Phylogenetic trees show evolutionary relationships among sequences. "
-        "This visualization displays the hierarchical clustering of your sequences."
-    )
+    st.info("This section visualizes the phylogenetic tree and provides the Newick format for download.")
 
-    if not uploaded_tree: 
-        st.warning("No phylogenetic tree data found from the uploaded file.")
+    if not tree:
+        st.warning("No phylogenetic tree to display.")
         return
 
-    st.subheader("📄 Phylogenetic Tree")
+    # Visualization
+    st.subheader("📊 Tree Visualization")
+    fig, ax = plt.subplots(figsize=(10, 10))
+    try:
+        Phylo.draw(tree, axes=ax)
+        st.pyplot(fig)
 
-    # Only redraw the tree when needed
-    if 'tree_ascii' not in st.session_state:
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        st.download_button(
+            label="📥 Download Tree Image (PNG)",
+            data=buf,
+            file_name="phylogenetic_tree.png",
+            mime="image/png"
+        )
+    except Exception as e:
+        st.error(f"Could not draw the tree graphically: {e}")
+        st.info("Displaying ASCII version of the tree instead.")
         tree_io = StringIO()
         Phylo.draw_ascii(tree, out=tree_io)
-        st.session_state.tree_ascii = tree_io.getvalue()
+        st.code(tree_io.getvalue())
 
+    # Newick format
+    st.subheader("📄 Newick Format")
+    if 'tree_newick' not in st.session_state or not st.session_state.get('tree_newick'):
         tree_newick_io = StringIO()
         Phylo.write(tree, tree_newick_io, "newick")
         st.session_state.tree_newick = tree_newick_io.getvalue()
 
-    st.text(st.session_state.tree_ascii)
-
+    st.code(st.session_state.tree_newick)
     st.download_button(
-        label="📥 Download Phylogenetic Tree (Newick)",
+        label="📥 Download Newick File",
         data=st.session_state.tree_newick,
-        file_name="phylogenetic_tree.newick",
+        file_name="phylogenetic_tree.nwk",
         mime="text/plain"
     )
 
 
-def perform_pairwise_alignment(seq1_rec, seq2_rec, seq_type, mode="global", open_gap=-0.5, extend_gap=-0.1):
+def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-0.1):
+    """
+    Perform pairwise alignment using Biopython's Align.PairwiseAligner.
+
+    Parameters:
+        seq1: First sequence record
+        seq2: Second sequence record
+        seq_type (str): Type of sequences ('DNA' or 'Protein')
+        mode (str): Alignment mode ('global', 'local', or 'overlap')
+        open_gap_score (float): Score for opening a gap
+        extend_gap_score (float): Score for extending a gap
+
+    Returns:
+        tuple: (alignment_text, mutations) - Formatted alignment text and list of mutations
+    """
     try:
-        valid_chars_dna = set('ATGCUNRYKMSWBDHV')
-        valid_chars_protein = set('ACDEFGHIKLMNPQRSTVWYBXZJUO')
-        valid_chars = valid_chars_dna if seq_type == "DNA" else valid_chars_protein
-        
-        s1_str_orig = str(seq1_rec.seq)
-        s2_str_orig = str(seq2_rec.seq)
+        # Clean sequences by converting to uppercase and removing invalid characters
+        if seq_type == "DNA":
+            valid_chars = set('ATGCNRYKMSWBDHV')
+        else:  # Protein
+            valid_chars = set('ACDEFGHIKLMNPQRSTVWYBXZJUO')
 
-        s1_cleaned_str = ''.join(c.upper() for c in s1_str_orig if c.upper() in valid_chars or c == '-')
-        s2_cleaned_str = ''.join(c.upper() for c in s2_str_orig if c.upper() in valid_chars or c == '-')
-        
-        if not s1_cleaned_str or not s2_cleaned_str:
-            return "One or both sequences became empty after cleaning (removing non-standard characters). Please check input.", []
+        # Clean the sequences by removing invalid characters
+        seq1_str = ''.join(c.upper() for c in str(seq1.seq) if c.upper() in valid_chars or c == '-')
+        seq2_str = ''.join(c.upper() for c in str(seq2.seq) if c.upper() in valid_chars or c == '-')
 
+        # Create new Seq objects with the cleaned sequences
+        cleaned_seq1 = Seq(seq1_str)
+        cleaned_seq2 = Seq(seq2_str)
+
+        # Configure the aligner
         aligner = Align.PairwiseAligner()
         aligner.mode = mode
-        aligner.substitution_matrix = substitution_matrices.load("NUC.4.4" if seq_type == "DNA" else "BLOSUM62")
-        aligner.open_gap_score = open_gap
-        aligner.extend_gap_score = extend_gap
-        
-        alignments = list(aligner.align(Seq(s1_cleaned_str), Seq(s2_cleaned_str))) 
-        
-        if not alignments: 
-            return "No alignment found. Sequences might be too dissimilar or parameters too stringent.", []
-        
-        best_alignment = alignments[0] 
-        aligned_s1_str_from_biopython = str(best_alignment[0])
-        aligned_s2_str_from_biopython = str(best_alignment[1])
-        
-        match_line_str = generate_match_line(aligned_s1_str_from_biopython, aligned_s2_str_from_biopython, aligner.substitution_matrix)
-        mutations_list = report_mutations_from_alignment(aligned_s1_str_from_biopython, aligned_s2_str_from_biopython) 
-        
-        formatted_alignment_text = format_alignment_display(
-            seq1_rec.id, aligned_s1_str_from_biopython, match_line_str, 
-            seq2_rec.id, aligned_s2_str_from_biopython, best_alignment.score
-        )
-        return formatted_alignment_text, mutations_list
+
+        if seq_type == "DNA":
+            aligner.substitution_matrix = substitution_matrices.load("NUC.4.4")
+        else:
+            aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+
+        aligner.open_gap_score = open_gap_score
+        aligner.extend_gap_score = extend_gap_score
+
+        # Perform the alignment with cleaned sequences
+        alignments = aligner.align(cleaned_seq1, cleaned_seq2)
+
+        if not alignments:
+            return "No alignments found. Sequences may be too dissimilar.", []
+
+        alignment = next(alignments)
+
+        # Get the alignment as strings with gaps
+        aligned_seq1_str = str(alignment[0])
+        aligned_seq2_str = str(alignment[1])
+
+        # Generate match line
+        match_line = generate_match_line(aligned_seq1_str, aligned_seq2_str, aligner.substitution_matrix)
+
+        # Report mutations
+        mutations = report_mutations(aligned_seq1_str, aligned_seq2_str)
+
+        # Format alignment display
+        alignment_text = format_alignment_display(seq1.id, aligned_seq1_str, match_line, seq2.id, aligned_seq2_str, alignment.score)
+
+        return alignment_text, mutations
     except Exception as e:
-        # traceback.print_exc() 
-        return f"Pairwise alignment error: {e}. Check sequence characters and parameters.", []
+        error_msg = f"An error occurred during pairwise alignment: {str(e)}"
+        print(traceback.format_exc())
+        return error_msg, []
 
-def generate_match_line(aligned_seq1_str, aligned_seq2_str, sub_matrix, similar_threshold=1):
-    match_chars = []
-    for char1, char2 in zip(aligned_seq1_str, aligned_seq2_str):
-        if char1 == '-' or char2 == '-': 
-            match_chars.append(' ')
-        elif char1 == char2: 
-            match_chars.append('|')
-        else: 
-            score = -float('inf') 
-            try: 
-                score = sub_matrix[(char1, char2)] 
-            except KeyError: 
-                try: score = sub_matrix[(char2, char1)]
-                except KeyError: pass 
-            
-            if score >= similar_threshold:
-                match_chars.append(':') 
-            else:
-                match_chars.append(' ') 
-    return "".join(match_chars)
+def generate_match_line(aligned_seq1, aligned_seq2, substitution_matrix, threshold=1):
+    """
+    Generate a match line for two aligned sequences.
 
-def format_alignment_display(id1, aln1_str, match_str, id2, aln2_str, score, line_len=70):
-    aln_len_total = len(aln1_str)
-    if not (aln_len_total == len(match_str) == len(aln2_str)):
-        return "Error: Aligned string lengths mismatch in display formatting."
+    Parameters:
+        aligned_seq1 (str): First aligned sequence with gaps
+        aligned_seq2 (str): Second aligned sequence with gaps
+        substitution_matrix: Substitution matrix for scoring
+        threshold (int): Threshold for similarity
 
-    output_display_str = f"Alignment Score: {score:.2f}\n\n"
-    max_id_len = max(len(id1), len(id2), len("Match"), len("Position")) + 2 
+    Returns:
+        str: Match line with | for identical, : for similar, and space for different
+    """
+    match_line = []
+    for a, b in zip(aligned_seq1, aligned_seq2):
+        if a == b and a != '-':
+            match_line.append('|')  # Identical
+        elif a != '-' and b != '-' and are_similar(a, b, substitution_matrix, threshold):
+            match_line.append(':')  # Similar
+        else:
+            match_line.append(' ')  # Different or gap
 
-    seq1_ungapped_pos = 0
-    seq2_ungapped_pos = 0
-
-    for i in range(0, aln_len_total, line_len):
-        chunk_aln1 = aln1_str[i : i + line_len]
-        chunk_match = match_str[i : i + line_len]
-        chunk_aln2 = aln2_str[i : i + line_len]
-
-        start_pos1_display = seq1_ungapped_pos + 1
-        start_pos2_display = seq2_ungapped_pos + 1
-        
-        seq1_ungapped_pos += len(chunk_aln1.replace('-', ''))
-        seq2_ungapped_pos += len(chunk_aln2.replace('-', ''))
-
-        end_pos1_display = seq1_ungapped_pos
-        end_pos2_display = seq2_ungapped_pos
-        
-        output_display_str += f"{id1.ljust(max_id_len)}{start_pos1_display:<7} {chunk_aln1} {end_pos1_display}\n"
-        output_display_str += f"{'Match'.ljust(max_id_len)}{''.ljust(7)} {chunk_match}\n"
-        output_display_str += f"{id2.ljust(max_id_len)}{start_pos2_display:<7} {chunk_aln2} {end_pos2_display}\n\n"
-        
-    return output_display_str.strip()
+    return ''.join(match_line)
 
 
-def report_mutations_from_alignment(aligned_ref_str, aligned_query_str):
-    """ Reports mutations based on Biopython's aligned strings. Ref positions are ungapped. """
-    mutations_found = []
-    ref_ungapped_position_counter = 0
-    for i in range(len(aligned_ref_str)): 
-        ref_char_at_pos = aligned_ref_str[i]
-        query_char_at_pos = aligned_query_str[i]
-        
-        if ref_char_at_pos != '-':
-            ref_ungapped_position_counter += 1
-        
-        if ref_char_at_pos != query_char_at_pos:
-            if ref_char_at_pos != '-' and query_char_at_pos != '-':
-                mutations_found.append(f"{ref_char_at_pos}{ref_ungapped_position_counter}{query_char_at_pos}")
-    return mutations_found
+def are_similar(a, b, substitution_matrix, threshold=1):
+    """
+    Determine if two residues are similar based on the substitution matrix.
 
+    Parameters:
+        a (str): First residue
+        b (str): Second residue
+        substitution_matrix: Substitution matrix for scoring
+        threshold (int): Threshold for similarity
 
-def perform_msa(sequences_list, ref_id_msa, seq_type, out_format): 
+    Returns:
+        bool: True if residues are similar, False otherwise
+    """
     try:
-        pyfamsa_input_sequences = [PyFAMSASequence(s.id.encode(), str(s.seq).encode()) for s in sequences_list]
-        famsa_aligner = PyFAMSAAligner(guide_tree="sl") 
-        msa_from_pyfamsa = famsa_aligner.align(pyfamsa_input_sequences)
-        
-        biopython_aligned_records = [
-            SeqRecord(Seq(s.sequence.decode()), id=s.id.decode(), description="") 
-            for s in msa_from_pyfamsa
+        if a == '-' or b == '-':
+            return False
+        score = substitution_matrix[a.upper()][b.upper()]
+        return score >= threshold
+    except KeyError:
+        return False
+
+
+def format_alignment_display(id1, aligned1, match_line, id2, aligned2, score, interval=10):
+    """
+    Create a formatted string for alignment display, including match lines and location markers.
+
+    Parameters:
+        id1 (str): ID of first sequence
+        aligned1 (str): First aligned sequence with gaps
+        match_line (str): Line showing matches between sequences
+        id2 (str): ID of second sequence
+        aligned2 (str): Second aligned sequence with gaps
+        score (float): Alignment score
+        interval (int): Interval for position markers
+
+    Returns:
+        str: Formatted alignment text
+    """
+    def generate_location_line(aligned_seq, interval=10):
+        location = [' '] * len(aligned_seq)
+        residue_count = 0
+        next_mark = interval
+        for i, char in enumerate(aligned_seq):
+            if char != '-':
+                residue_count += 1
+                if residue_count == next_mark:
+                    mark_str = str(next_mark)
+                    mark_len = len(mark_str)
+                    start_pos = i - mark_len + 1
+                    if start_pos < 0:
+                        start_pos = 0
+                    for j, digit in enumerate(mark_str):
+                        pos = start_pos + j
+                        if pos < len(aligned_seq) and location[pos] == ' ':
+                            location[pos] = digit
+                    next_mark += interval
+        return ''.join(location)
+
+    max_label_length = max(len(id1), len("Match"), len(id2))
+    id1_padded = id1.ljust(max_label_length)
+    match_padded = "Match".ljust(max_label_length)
+    id2_padded = id2.ljust(max_label_length)
+    location1 = generate_location_line(aligned1, interval)
+    location2 = generate_location_line(aligned2, interval)
+    padding = ' ' * (max_label_length + 2)
+    location1_padded = padding + location1
+    location2_padded = padding + location2
+    alignment_text = (
+        "Pairwise Alignment:\n"
+        f"{location1_padded}\n"
+        f"{id1_padded}: {aligned1}\n"
+        f"{match_padded}: {match_line}\n"
+        f"{id2_padded}: {aligned2}\n"
+        f"{location2_padded}\n"
+        f"{'Score'.ljust(max_label_length)}: {score:.2f}\n"
+    )
+    return alignment_text
+
+
+def report_mutations(aligned1, aligned2):
+    """
+    Report point mutations between two aligned sequences in the format 'S18I'.
+
+    Parameters:
+        aligned1 (str): First aligned sequence with gaps
+        aligned2 (str): Second aligned sequence with gaps
+
+    Returns:
+        list: List of mutation strings (e.g., 'S18I')
+    """
+    mutations = []
+    position = 0
+    for i, (a, b) in enumerate(zip(aligned1, aligned2), start=1):
+        if a != '-':
+            position += 1
+        if a != b and a != '-' and b != '-':
+            mutations.append(f"{a}{position}{b}")
+    return mutations
+
+
+def perform_msa(sequences, reference_id, seq_type, output_format):
+    """
+    Perform Multiple Sequence Alignment using pyFAMSA and report mutations relative to the reference sequence.
+
+    Parameters:
+        sequences: List of sequence records to align
+        reference_id (str): ID of the reference sequence for mutation detection
+        seq_type (str): Type of sequences ('DNA' or 'Protein')
+        output_format (str): Format for the MSA output
+
+    Returns:
+        tuple: (msa_text, mutations) - MSA text and dictionary of mutations per sequence
+    """
+    try:
+        pyfamsa_sequences = [
+            PyFAMSASequence(seq.id.encode(), str(seq.seq).encode()) for seq in sequences
+        ]
+        aligner = PyFAMSAAligner(guide_tree="upgma")
+        msa = aligner.align(pyfamsa_sequences)
+        aligned_seq_records = [
+            SeqRecord(
+                Seq(seq.sequence.decode()),
+                id=seq.id.decode(),
+                description=""
+            )
+            for seq in msa
         ]
         msa_io = StringIO()
         SeqIO.write(aligned_seq_records, msa_io, output_format)
@@ -1507,6 +1563,25 @@ def convert_format(sequences, output_format):
         return converted_data, None
     except Exception as e:
         return None, f"Error during format conversion: {e}"
+
+
+def build_tree_from_alignment(alignment, seq_type):
+    """
+    Build a phylogenetic tree from a Multiple Sequence Alignment.
+    """
+    try:
+        if seq_type == 'DNA':
+            calculator = DistanceCalculator('identity')
+        else: # Protein
+            calculator = DistanceCalculator('blosum62')
+
+        dm = calculator.get_distance(alignment)
+        constructor = DistanceTreeConstructor()
+        tree = constructor.upgma(dm)
+        return tree
+    except Exception as e:
+        st.error(f"Tree construction from MSA failed: {e}")
+        return None
 
 
 def build_phylogenetic_tree(sequences, seq_type):
