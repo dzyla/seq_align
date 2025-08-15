@@ -407,11 +407,7 @@ def main():
     st.sidebar.header("📥 Upload and Settings")
     input_format = st.sidebar.selectbox(
         "Select Input Format",
-<<<<<<< HEAD
-        ("Text (FASTA)", "FASTA", "PDB", "mmCIF", "Clustal", "Phylip", "EMBL", "GenBank", "Newick"),
-=======
         ("Text (FASTA)", "FASTA", "Clustal", "GenBank", "Newick", "PDB", "mmCIF"),
->>>>>>> a7a24bab320df78dd1264681f90fd6ce91ac9a70
         help="Choose the format of your input sequences."
     )
 
