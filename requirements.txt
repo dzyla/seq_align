@@ -3,6 +3,6 @@ biopython
 numpy
 plotly
 matplotlib
-pyfamsa
+pyfamsa=0.6.0
 typing-extensions
 kaleido
