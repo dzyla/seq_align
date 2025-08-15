@@ -4,6 +4,11 @@ numpy
 plotly
 matplotlib
 pyfamsa
+<<<<<<< HEAD
 typing-extensions
 networkx
 pygraphviz
+=======
+typing-extensions
+kaleido
+>>>>>>> refactor/finish-app
