@@ -318,23 +318,30 @@ def handle_input(input_format: str) -> Tuple[Optional[List[SeqRecord]], Optional
             else:
                 sequences = st.session_state.sequences
     elif input_format in ["PDB", "mmCIF"]:
-        uploaded_file = st.sidebar.file_uploader(
-            f"Upload {input_format} File",
+        uploaded_files = st.sidebar.file_uploader(
+            f"Upload {input_format} File(s)",
             type=get_file_extensions(input_format),
             key=f"uploader_{input_format}",
-            help=f"Upload a {input_format} file to extract protein sequences"
+            help=f"Upload one or more {input_format} files to extract protein sequences",
+            accept_multiple_files=True
         )
-        if uploaded_file:
-            if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
-                st.session_state.last_file = uploaded_file.name
+        if uploaded_files:
+            # Process multiple files
+            all_sequences = []
+            for uploaded_file in uploaded_files:
                 sequences, error = parse_sequences_from_structure(uploaded_file, input_format)
                 if error:
-                    st.sidebar.error(error)
+                    st.sidebar.error(f"Error in file {uploaded_file.name}: {error}")
                 else:
-                    st.sidebar.success(f"Successfully extracted {len(sequences)} sequences.")
-                    st.session_state.sequences = sequences
-            else:
-                sequences = st.session_state.sequences
+                    all_sequences.extend(sequences)
+
+            if all_sequences:
+                st.sidebar.success(f"Successfully extracted {len(all_sequences)} sequences from {len(uploaded_files)} file(s).")
+                st.session_state.sequences = all_sequences
+        else:
+            # Clear sequences if no files are uploaded
+            if 'sequences' in st.session_state:
+                st.session_state.sequences = None
     elif input_format == "Newick":
         uploaded_file = st.sidebar.file_uploader(
             "Upload Newick Tree File",
