@@ -3,6 +3,7 @@ biopython
 numpy
 plotly
 matplotlib
-pyfamsa=0.6.0
 typing-extensions
 kaleido
+# Install pyfamsa from a wheel file for better compatibility on hosted servers
+pyfamsa @ https://github.com/dzyla/pyfamsa/releases/download/v0.6.0/pyfamsa-0.6.0-cp312-cp312-win_amd64.whl 
