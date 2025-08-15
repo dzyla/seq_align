@@ -1287,6 +1287,9 @@ def phylogenetic_tree_section(tree):
 
         Phylo.draw(tree, axes=ax)
 
+        # Add a scale bar
+        ax.set_xlabel("Evolutionary Distance")
+
         # Improve layout
         plt.tight_layout()
         st.pyplot(fig)
