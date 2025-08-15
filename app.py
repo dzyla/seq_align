@@ -652,7 +652,7 @@ def parse_sequences_from_structure(file, format_name):
                                 seq_record = SeqRecord(
                                     Seq(sequence),
                                     id=f"{file_basename}_{chain_id}",
-                                    description=f"Chain {chain_id} from {file.name}"
+                                    description=""
                                 )
                                 sequences.append(seq_record)
                                 st.write(f"✅ Extracted {len(sequence)} residues")
@@ -682,7 +682,7 @@ def parse_sequences_from_structure(file, format_name):
                                 seq_record = SeqRecord(
                                     Seq(aa_sequence),
                                     id=f"{file_basename}_{chain_id}_manual",
-                                    description=f"Manually extracted from chain {chain_id}"
+                                    description=""
                                 )
                                 sequences.append(seq_record)
                                 st.write(f"✅ Manually extracted {valid_residues} residues")
