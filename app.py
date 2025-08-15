@@ -330,15 +330,17 @@ def handle_input(input_format: str) -> Tuple[Optional[List[SeqRecord]], Optional
             # Process multiple files
             all_sequences = []
             for uploaded_file_item in uploaded_files:
-                sequences, error = parse_sequences_from_structure(uploaded_file_item, input_format)
+                parsed_sequences, error = parse_sequences_from_structure(uploaded_file_item, input_format)
                 if error:
                     st.sidebar.error(f"Error in file {uploaded_file_item.name}: {error}")
                 else:
-                    all_sequences.extend(sequences)
+                    all_sequences.extend(parsed_sequences)
 
             if all_sequences:
                 st.sidebar.success(f"Successfully extracted {len(all_sequences)} sequences from {len(uploaded_files)} file(s).")
                 st.session_state.sequences = all_sequences
+
+            sequences = all_sequences
             uploaded_file = uploaded_files
         else:
             # Clear sequences if no files are uploaded
