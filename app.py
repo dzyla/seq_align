@@ -452,8 +452,14 @@ def main():
             SeqIO.write(sequences, fasta_io, "fasta")
             fasta_str = fasta_io.getvalue()
             st.text_area("FASTA Sequences", value=fasta_str, height=500)
-            file_basename = os.path.splitext(os.path.basename(uploaded_file.name))[0]
-            st.download_button(label="📥 Download FASTA", data=fasta_str, file_name=f"{file_basename}_sequences.fasta", mime="text/plain")
+
+            file_name = "extracted_sequences.fasta"
+            # The 'uploaded_file' variable is only available for single file uploads.
+            # For multiple files, we use a generic name.
+            if uploaded_file and hasattr(uploaded_file, 'name'):
+                 file_name = f"{os.path.splitext(os.path.basename(uploaded_file.name))[0]}_sequences.fasta"
+
+            st.download_button(label="📥 Download FASTA", data=fasta_str, file_name=file_name, mime="text/plain")
         elif alignment_mode == "Pairwise":
             pairwise_alignment_section(sequences, seq_type)
         elif alignment_mode == "MSA":
