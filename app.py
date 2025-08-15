@@ -329,16 +329,17 @@ def handle_input(input_format: str) -> Tuple[Optional[List[SeqRecord]], Optional
         if uploaded_files:
             # Process multiple files
             all_sequences = []
-            for uploaded_file in uploaded_files:
-                sequences, error = parse_sequences_from_structure(uploaded_file, input_format)
+            for uploaded_file_item in uploaded_files:
+                sequences, error = parse_sequences_from_structure(uploaded_file_item, input_format)
                 if error:
-                    st.sidebar.error(f"Error in file {uploaded_file.name}: {error}")
+                    st.sidebar.error(f"Error in file {uploaded_file_item.name}: {error}")
                 else:
                     all_sequences.extend(sequences)
 
             if all_sequences:
                 st.sidebar.success(f"Successfully extracted {len(all_sequences)} sequences from {len(uploaded_files)} file(s).")
                 st.session_state.sequences = all_sequences
+            uploaded_file = uploaded_files
         else:
             # Clear sequences if no files are uploaded
             if 'sequences' in st.session_state:
@@ -455,10 +456,12 @@ def main():
             st.text_area("FASTA Sequences", value=fasta_str, height=500)
 
             file_name = "extracted_sequences.fasta"
-            # The 'uploaded_file' variable is only available for single file uploads.
-            # For multiple files, we use a generic name.
-            if uploaded_file and hasattr(uploaded_file, 'name'):
-                 file_name = f"{os.path.splitext(os.path.basename(uploaded_file.name))[0]}_sequences.fasta"
+            # The 'uploaded_file' variable can be a list of files for multiple uploads.
+            if isinstance(uploaded_file, list):
+                if len(uploaded_file) == 1:
+                    file_name = f"{os.path.splitext(os.path.basename(uploaded_file[0].name))[0]}_sequences.fasta"
+            elif uploaded_file and hasattr(uploaded_file, 'name'):
+                file_name = f"{os.path.splitext(os.path.basename(uploaded_file.name))[0]}_sequences.fasta"
 
             st.download_button(label="📥 Download FASTA", data=fasta_str, file_name=file_name, mime="text/plain")
         elif alignment_mode == "Pairwise":
