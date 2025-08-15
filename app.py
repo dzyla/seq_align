@@ -1267,12 +1267,6 @@ def phylogenetic_tree_section(tree):
 
     # Add UI for customization
     st.sidebar.subheader("Tree Visualization Settings")
-    color_map_name = st.sidebar.selectbox(
-        "Select Label Color Map",
-        ("viridis", "plasma", "inferno", "magma", "cividis", "rainbow", "jet", "nipy_spectral"),
-        index=0,
-        help="Choose a color map for the sequence labels."
-    )
     line_width = st.sidebar.slider(
         "Branch Line Width",
         min_value=0.5,
@@ -1282,25 +1276,23 @@ def phylogenetic_tree_section(tree):
         help="Adjust the thickness of the tree branches."
     )
 
-    fig, ax = plt.subplots(figsize=(10, 10))
+    # Dynamically adjust figure size based on the number of leaves
+    num_leaves = len(tree.get_terminals())
+    fig_height = max(10, num_leaves * 0.4)  # Adjust height based on number of leaves
+    fig, ax = plt.subplots(figsize=(10, fig_height))
+
     try:
         # Set line width for branches
         plt.rc('lines', linewidth=line_width)
 
-        # Generate colors for labels
-        terminals = tree.get_terminals()
-        if terminals:
-            cmap = plt.get_cmap(color_map_name)
-            colors = cmap(np.linspace(0, 1, len(terminals)))
-            label_colors = {terminal.name: color for terminal, color in zip(terminals, colors)}
-        else:
-            label_colors = None
+        Phylo.draw(tree, axes=ax)
 
-        Phylo.draw(tree, axes=ax, label_colors=label_colors)
+        # Improve layout
+        plt.tight_layout()
         st.pyplot(fig)
 
         buf = BytesIO()
-        fig.savefig(buf, format="png")
+        fig.savefig(buf, format="png", bbox_inches='tight')
         buf.seek(0)
         st.download_button(
             label="📥 Download Tree Image (PNG)",
