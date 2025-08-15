@@ -6,4 +6,4 @@ matplotlib
 typing-extensions
 kaleido
 # Install pyfamsa from a wheel file for better compatibility on hosted servers
-pyfamsa @ https://files.pythonhosted.org/packages/07/7a/b7b70800d822e1496cbd466c818e09896742681739ebc22bdd075bdf7ac9/pyfamsa-0.5.0-cp312-cp312-manylinux_2_34_x86_64.whl 
+pyfamsa==0.3.2
