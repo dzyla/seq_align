@@ -1269,11 +1269,14 @@ def antibody_prediction_section(sequences):
 
                              # Full Numbering String
                              seq_map = []
+                             domain_sequence = ""
                              for (pos, ins), aa in numbering:
                                  pos_str = str(pos) + ins.strip()
                                  if aa != '-':
                                      seq_map.append(f"{pos_str}{aa}")
+                                     domain_sequence += aa
                              domain_info["Numbering"] = " ".join(seq_map)
+                             domain_info["Sequence"] = domain_sequence
 
                              results_data.append(domain_info)
 
@@ -1298,6 +1301,10 @@ def antibody_prediction_section(sequences):
                      st.subheader("Detailed Domain View")
                      for index, row in df.iterrows():
                          with st.expander(f"{row['Sequence ID']} - Domain {row['Domain Index']} ({row['Chain Type']})"):
+                             st.markdown("#### Domain Sequence (FASTA)")
+                             fasta_seq = f">{row['Sequence ID']}_Domain_{row['Domain Index']}\n{row['Sequence']}"
+                             st.code(fasta_seq, language="fasta")
+
                              st.json(row.to_dict())
 
                              if scheme == "IMGT":
