@@ -74,6 +74,10 @@ def plot_msa_image(msa_image: np.ndarray, msa_letters: np.ndarray, plot_method: 
         st.error("No MSA image data to plot.")
         return
 
+    if msa_image.size == 0 or msa_letters.size == 0:
+        st.error("MSA image data is empty.")
+        return
+
     if msa_image.shape != msa_letters.shape:
         st.error("Mismatch between msa_image and msa_letters dimensions.")
         return
@@ -126,7 +130,35 @@ def plot_msa_image_plotly(msa_image: np.ndarray, msa_letters: np.ndarray):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    img_bytes = fig.to_image(format="png")
+    try:
+        img_bytes = fig.to_image(format="png")
+    except Exception as e:
+        st.warning("High-resolution image export failed (Kaleido might be missing). Falling back to standard resolution.")
+
+        fig_mpl, ax = plt.subplots(figsize=(20, 7))
+        cax = ax.imshow(msa_image, cmap='Spectral', aspect='auto', interpolation='nearest')
+        cmap = plt.get_cmap('Spectral', 26)
+        ax.set_title("Multiple Sequence Alignment", fontsize=14)
+        ax.set_xlabel("MSA Residue Position", fontsize=12)
+        ax.set_ylabel("Sequence Number", fontsize=12)
+
+        unique_values = np.unique(msa_image)
+        handles = []
+        labels = []
+        for val in unique_values:
+            label = CODE_TO_AA.get(val, "?")
+            handles.append(mpatches.Patch(color=cmap(val), label=label))
+            labels.append(label)
+
+        ax.legend(handles=handles, labels=labels, title="Amino Acids", bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+        plt.tight_layout()
+
+        buf = BytesIO()
+        plt.savefig(buf, format="png", dpi=300, bbox_inches='tight')
+        plt.close(fig_mpl)
+        buf.seek(0)
+        img_bytes = buf
+
     st.download_button(
         label="📥 Download MSA Heatmap (PNG)",
         data=img_bytes,
@@ -1217,6 +1249,10 @@ def antibody_prediction_section(sequences):
     st.header("🛡️ Antibody Functional Domain Prediction")
     st.info("Predict functional domains (CDRs, Framework Regions) of antibodies using ANARCI.")
 
+    if not sequences:
+        st.error("No sequences available for prediction.")
+        return
+
     # Options
     col1, col2 = st.columns(2)
     with col1:
@@ -1286,7 +1322,7 @@ def antibody_prediction_section(sequences):
 
                      # Reorder columns for better display if IMGT
                      if scheme == "IMGT":
-                         cols = ["Sequence ID", "Chain Type", "Species", "CDR1", "CDR2", "CDR3", "Score", "E-value"]
+                         cols = ["Sequence ID", "Chain Type", "Species", "CDR1", "CDR2", "CDR3", "Score", "E-value", "Sequence"]
                          # Add other columns if they exist in df (handle errors if not)
                          display_cols = [c for c in cols if c in df.columns]
                          st.dataframe(df[display_cols])
@@ -1301,10 +1337,6 @@ def antibody_prediction_section(sequences):
                      st.subheader("Detailed Domain View")
                      for index, row in df.iterrows():
                          with st.expander(f"{row['Sequence ID']} - Domain {row['Domain Index']} ({row['Chain Type']})"):
-                             st.markdown("#### Domain Sequence (FASTA)")
-                             fasta_seq = f">{row['Sequence ID']}_Domain_{row['Domain Index']}\n{row['Sequence']}"
-                             st.code(fasta_seq, language="fasta")
-
                              st.json(row.to_dict())
 
                              if scheme == "IMGT":
@@ -1414,13 +1446,20 @@ def phylogenetic_tree_section(tree):
 
     # Visualization
     st.subheader("📊 Tree Visualization")
-    fig, ax = plt.subplots(figsize=(10, 10))
+    fig, ax = plt.subplots(figsize=(12, 8))
     try:
-        Phylo.draw(tree, axes=ax)
+        Phylo.draw(tree, axes=ax, do_show=False, show_confidence=False)
+
+        ax.set_title("Phylogenetic Tree", fontsize=16)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.get_yaxis().set_visible(False)
+
         st.pyplot(fig)
 
         buf = BytesIO()
-        fig.savefig(buf, format="png")
+        fig.savefig(buf, format="png", bbox_inches='tight')
         buf.seek(0)
         st.download_button(
             label="📥 Download Tree Image (PNG)",
@@ -1476,6 +1515,9 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
         # Clean the sequences by removing invalid characters
         seq1_str = ''.join(c.upper() for c in str(seq1.seq) if c.upper() in valid_chars or c == '-')
         seq2_str = ''.join(c.upper() for c in str(seq2.seq) if c.upper() in valid_chars or c == '-')
+
+        if not seq1_str or not seq2_str:
+             return "One or both sequences are empty after cleaning.", []
 
         # Create new Seq objects with the cleaned sequences
         cleaned_seq1 = Seq(seq1_str)
