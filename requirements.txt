@@ -7,3 +7,4 @@ typing-extensions
 kaleido
 # Install pyfamsa from a wheel file for better compatibility on hosted servers
 pyfamsa==0.3.2
+pandas
