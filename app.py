@@ -257,6 +257,8 @@ def init_session_state():
         "last_pairwise_params": {},
         "last_text_hash": None,
         "msa_tree": None,
+        "best_match_results": None,
+        "best_match_params": {},
     }
 
     # Initialize session state variables if they don't exist
@@ -467,13 +469,14 @@ def main():
                 keys_to_reset = [
                     'msa_result', 'mutations', 'msa_image', 'msa_letters',
                     'consensus_data', 'alignment_text', 'pairwise_mutations',
-                    'last_msa_params', 'last_pairwise_params'
+                    'last_msa_params', 'last_pairwise_params',
+                    'best_match_results', 'best_match_params'
                 ]
                 reset_results(keys_to_reset)
 
         alignment_mode = None
         if sequences:
-            options = ("Pairwise", "MSA", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree")
+            options = ("Pairwise", "MSA", "Best Match Finder", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree")
             if input_format in ["PDB", "mmCIF"]:
                 options = ("Extracted Sequences", "Antibody Prediction", "Phylogenetic Tree")
             alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options)
@@ -498,6 +501,8 @@ def main():
             pairwise_alignment_section(sequences, seq_type)
         elif alignment_mode == "MSA":
             msa_section(sequences, seq_type)
+        elif alignment_mode == "Best Match Finder":
+            best_match_finder_section(sequences, seq_type)
         elif alignment_mode == "Antibody Prediction":
             antibody_prediction_section(sequences)
         elif alignment_mode == "Convert Formats":
@@ -1433,6 +1438,266 @@ def format_conversion_section(sequences, input_format):
             st.error(f"Format conversion failed: {st.session_state.conversion_error}")
 
 
+def best_match_finder_section(sequences, seq_type):
+    """
+    Handles the Best Match Finder workflow.
+
+    Parameters:
+        sequences: List of sequence records
+        seq_type (str): Type of sequences ('DNA' or 'Protein')
+    """
+    st.header("🔍 Best Match Finder")
+    st.info(
+        "Identify the sequence that best matches a reference sequence from a set of input sequences. "
+        "Perform pairwise alignments and analyze score distributions."
+    )
+
+    if len(sequences) < 3:
+        st.warning("Please upload at least three sequences (1 reference + 2 queries) for this analysis.")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        reference_id = st.selectbox(
+            "Select Reference Sequence",
+            [seq.id for seq in sequences],
+            help="The sequence to compare all others against."
+        )
+
+    with col2:
+        align_mode = st.selectbox(
+            "Select Alignment Mode",
+            ("Global", "Local", "Overlap"),
+            index=0,
+            help="Global: Align entire sequences. Local: Find best local regions. Overlap: Allow end gaps."
+        )
+
+    c1, c2 = st.columns(2)
+    open_gap_score = c1.number_input(
+        "Open Gap Score",
+        value=-0.5,
+        step=0.1,
+        help="Penalty for opening a gap."
+    )
+    extend_gap_score = c2.number_input(
+        "Extend Gap Score",
+        value=-0.1,
+        step=0.1,
+        help="Penalty for extending a gap."
+    )
+
+    # State management for results
+    if 'best_match_results' not in st.session_state:
+        st.session_state.best_match_results = None
+    if 'best_match_params' not in st.session_state:
+        st.session_state.best_match_params = {}
+
+    current_params = {
+        'reference_id': reference_id,
+        'align_mode': align_mode,
+        'open_gap_score': open_gap_score,
+        'extend_gap_score': extend_gap_score,
+        'seq_count': len(sequences)
+    }
+
+    run_analysis = st.button("Find Best Match")
+
+    params_changed = st.session_state.best_match_params != current_params
+
+    if run_analysis or (st.session_state.best_match_results is not None and not params_changed):
+        if run_analysis or params_changed:
+            with st.spinner("Calculating pairwise alignments against reference..."):
+                aligner = get_aligner(seq_type, align_mode.lower(), open_gap_score, extend_gap_score)
+                best_match, results = find_best_match(sequences, reference_id, aligner, seq_type)
+
+                st.session_state.best_match_results = (best_match, results)
+                st.session_state.best_match_params = current_params
+
+        # Retrieve results
+        best_match, results = st.session_state.best_match_results
+
+        if not results:
+            st.error("No results found. Please check your sequences and parameters.")
+            return
+
+        # Display Best Match Summary
+        st.success(f"🏆 Best Match: **{best_match.id}** with Score: **{results[0]['Score']:.2f}**")
+
+        # Detailed Alignment of Best Match
+        with st.expander("Detailed Alignment: Reference vs Best Match", expanded=True):
+            ref_seq = next(s for s in sequences if s.id == reference_id)
+            alignment_text, mutations = perform_pairwise_alignment(
+                ref_seq, best_match, seq_type,
+                align_mode.lower(), open_gap_score, extend_gap_score
+            )
+            st.code(alignment_text)
+
+            if mutations:
+                 st.write(f"**Mutations ({len(mutations)}):** {', '.join(mutations)}")
+
+        # Visualizations
+        st.subheader("📊 Visualization")
+
+        # Prepare data for plotting
+        df_results = pd.DataFrame(results)
+
+        col_plot1, col_plot2 = st.columns(2)
+
+        with col_plot1:
+            # Histogram of Scores
+            fig_hist = go.Figure(data=[go.Histogram(x=df_results['Score'], nbinsx=20)])
+            fig_hist.update_layout(
+                title="Distribution of Alignment Scores",
+                xaxis_title="Alignment Score",
+                yaxis_title="Count",
+                bargap=0.1
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+        with col_plot2:
+            # Scatter Plot: Score vs Length
+            fig_scatter = go.Figure(data=go.Scatter(
+                x=df_results['Length'],
+                y=df_results['Score'],
+                mode='markers',
+                text=df_results['Sequence ID'],
+                hovertemplate="<b>%{text}</b><br>Length: %{x}<br>Score: %{y:.2f}<extra></extra>"
+            ))
+            fig_scatter.update_layout(
+                title="Score vs Sequence Length",
+                xaxis_title="Sequence Length",
+                yaxis_title="Alignment Score"
+            )
+            st.plotly_chart(fig_scatter, use_container_width=True)
+
+        # Results Table
+        st.subheader("📋 Results Table")
+
+        # Reorder columns
+        display_cols = ['Rank', 'Sequence ID', 'Score', 'Length']
+        st.dataframe(df_results[display_cols], use_container_width=True)
+
+        # Download results
+        csv = df_results[display_cols].to_csv(index=False)
+        st.download_button(
+            label="📥 Download Results (CSV)",
+            data=csv,
+            file_name="best_match_results.csv",
+            mime="text/csv"
+        )
+
+
+def get_aligner(seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-0.1):
+    """
+    Configure and return a PairwiseAligner.
+
+    Parameters:
+        seq_type (str): Type of sequences ('DNA' or 'Protein')
+        mode (str): Alignment mode ('global', 'local', or 'overlap')
+        open_gap_score (float): Score for opening a gap
+        extend_gap_score (float): Score for extending a gap
+
+    Returns:
+        Align.PairwiseAligner: Configured aligner object
+    """
+    aligner = Align.PairwiseAligner()
+    aligner.mode = mode
+
+    if seq_type == "DNA":
+        aligner.substitution_matrix = substitution_matrices.load("NUC.4.4")
+    else:
+        aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+
+    aligner.open_gap_score = open_gap_score
+    aligner.extend_gap_score = extend_gap_score
+
+    return aligner
+
+
+def calculate_alignment_score(aligner, seq1, seq2, seq_type):
+    """
+    Calculate alignment score between two sequences.
+    Handles basic cleaning of sequences.
+
+    Parameters:
+        aligner: Configured Bio.Align.PairwiseAligner
+        seq1: First sequence (SeqRecord, Seq, or str)
+        seq2: Second sequence (SeqRecord, Seq, or str)
+        seq_type (str): Type of sequences ('DNA' or 'Protein')
+
+    Returns:
+        float: Alignment score or None if sequences are empty
+    """
+    if seq_type == "DNA":
+        valid_chars = set('ATGCNRYKMSWBDHV')
+    else:  # Protein
+        valid_chars = set('ACDEFGHIKLMNPQRSTVWYBXZJUO')
+
+    s1_str = str(seq1.seq) if hasattr(seq1, 'seq') else str(seq1)
+    s2_str = str(seq2.seq) if hasattr(seq2, 'seq') else str(seq2)
+
+    seq1_clean = ''.join(c.upper() for c in s1_str if c.upper() in valid_chars or c == '-')
+    seq2_clean = ''.join(c.upper() for c in s2_str if c.upper() in valid_chars or c == '-')
+
+    if not seq1_clean or not seq2_clean:
+        return None
+
+    return aligner.score(Seq(seq1_clean), Seq(seq2_clean))
+
+
+def find_best_match(sequences, reference_id, aligner, seq_type):
+    """
+    Find the best matching sequence against a reference sequence.
+
+    Parameters:
+        sequences (list): List of SeqRecord objects.
+        reference_id (str): ID of the reference sequence.
+        aligner (Bio.Align.PairwiseAligner): Configured aligner.
+        seq_type (str): 'DNA' or 'Protein'.
+
+    Returns:
+        tuple: (best_match_record, results_list)
+            best_match_record: SeqRecord of the best match (or None if no others)
+            results_list: List of dictionaries containing score, id, etc.
+    """
+    # Find reference sequence
+    ref_seq = next((s for s in sequences if s.id == reference_id), None)
+    if not ref_seq:
+        return None, []
+
+    results = []
+
+    for seq in sequences:
+        if seq.id == reference_id:
+            continue
+
+        score = calculate_alignment_score(aligner, ref_seq, seq, seq_type)
+        if score is None:
+            continue
+
+        results.append({
+            'Sequence ID': seq.id,
+            'Score': score,
+            'Length': len(seq.seq),
+            # 'sequence': seq # Store record if needed, but keeping it simple for dataframe
+        })
+
+    if not results:
+        return None, []
+
+    # Sort by score descending
+    results.sort(key=lambda x: x['Score'], reverse=True)
+
+    # Add Rank
+    for i, res in enumerate(results):
+        res['Rank'] = i + 1
+
+    best_match_id = results[0]['Sequence ID']
+    best_match_record = next(s for s in sequences if s.id == best_match_id)
+
+    return best_match_record, results
+
+
 def phylogenetic_tree_section(tree):
     """
     Handles the phylogenetic tree visualization workflow.
@@ -1523,17 +1788,8 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
         cleaned_seq1 = Seq(seq1_str)
         cleaned_seq2 = Seq(seq2_str)
 
-        # Configure the aligner
-        aligner = Align.PairwiseAligner()
-        aligner.mode = mode
-
-        if seq_type == "DNA":
-            aligner.substitution_matrix = substitution_matrices.load("NUC.4.4")
-        else:
-            aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
-
-        aligner.open_gap_score = open_gap_score
-        aligner.extend_gap_score = extend_gap_score
+        # Get configured aligner
+        aligner = get_aligner(seq_type, mode, open_gap_score, extend_gap_score)
 
         # Perform the alignment with cleaned sequences
         alignments = aligner.align(cleaned_seq1, cleaned_seq2)
@@ -1822,14 +2078,8 @@ def compute_distance(seq1, seq2, seq_type):
     Returns:
         float: Distance value between 0 and 1
     """
-    aligner = Align.PairwiseAligner()
-    aligner.mode = 'global'
-    if seq_type == "DNA":
-        aligner.substitution_matrix = substitution_matrices.load("NUC.4.4")
-    else:
-        aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
-    aligner.open_gap_score = -0.5
-    aligner.extend_gap_score = -0.1
+    # Use standard gap scores for distance computation
+    aligner = get_aligner(seq_type, mode='global', open_gap_score=-0.5, extend_gap_score=-0.1)
 
     alignments = aligner.align(seq1, seq2)
     if not alignments:
