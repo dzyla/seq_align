@@ -1472,6 +1472,13 @@ def best_match_finder_section(sequences, seq_type):
             help="Global: Align entire sequences. Local: Find best local regions. Overlap: Allow end gaps."
         )
 
+    # Allow excluding sequences
+    exclude_ids = st.multiselect(
+        "Exclude Sequences from Search",
+        [seq.id for seq in sequences if seq.id != reference_id],
+        help="Select sequences to exclude from the best match search."
+    )
+
     c1, c2 = st.columns(2)
     open_gap_score = c1.number_input(
         "Open Gap Score",
@@ -1497,7 +1504,8 @@ def best_match_finder_section(sequences, seq_type):
         'align_mode': align_mode,
         'open_gap_score': open_gap_score,
         'extend_gap_score': extend_gap_score,
-        'seq_count': len(sequences)
+        'seq_count': len(sequences),
+        'exclude_ids': tuple(sorted(exclude_ids))
     }
 
     run_analysis = st.button("Find Best Match")
@@ -1508,7 +1516,14 @@ def best_match_finder_section(sequences, seq_type):
         if run_analysis or params_changed:
             with st.spinner("Calculating pairwise alignments against reference..."):
                 aligner = get_aligner(seq_type, align_mode.lower(), open_gap_score, extend_gap_score)
-                best_match, results = find_best_match(sequences, reference_id, aligner, seq_type)
+
+                # Filter sequences: keep reference and non-excluded sequences
+                sequences_to_search = [
+                    seq for seq in sequences
+                    if seq.id == reference_id or seq.id not in exclude_ids
+                ]
+
+                best_match, results = find_best_match(sequences_to_search, reference_id, aligner, seq_type)
 
                 st.session_state.best_match_results = (best_match, results)
                 st.session_state.best_match_params = current_params
@@ -1601,7 +1616,6 @@ def get_aligner(seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-
         Align.PairwiseAligner: Configured aligner object
     """
     aligner = Align.PairwiseAligner()
-    aligner.mode = mode
 
     if seq_type == "DNA":
         aligner.substitution_matrix = substitution_matrices.load("NUC.4.4")
@@ -1610,6 +1624,13 @@ def get_aligner(seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-
 
     aligner.open_gap_score = open_gap_score
     aligner.extend_gap_score = extend_gap_score
+
+    if mode == "overlap":
+        aligner.mode = "global"
+        aligner.open_end_gap_score = 0.0
+        aligner.extend_end_gap_score = 0.0
+    else:
+        aligner.mode = mode
 
     return aligner
 

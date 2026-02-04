@@ -19,6 +19,12 @@ class TestBestMatchFinder(unittest.TestCase):
         self.assertEqual(aligner.open_gap_score, -2.0)
         self.assertEqual(aligner.extend_gap_score, -0.5)
 
+    def test_get_aligner_overlap(self):
+        aligner = get_aligner("DNA", mode="overlap", open_gap_score=-0.5, extend_gap_score=-0.1)
+        self.assertEqual(aligner.mode, "global")
+        self.assertEqual(aligner.open_end_gap_score, 0.0)
+        self.assertEqual(aligner.extend_end_gap_score, 0.0)
+
     def test_calculate_alignment_score(self):
         aligner = get_aligner("DNA")
         seq1 = SeqRecord(Seq("ATGC"), id="S1")
@@ -61,6 +67,25 @@ class TestBestMatchFinder(unittest.TestCase):
         best_match, results = find_best_match(sequences, "Ref", aligner, "Protein")
 
         self.assertEqual(best_match.id, "S1")
+
+    def test_find_best_match_exclusion(self):
+        aligner = get_aligner("DNA")
+        ref = SeqRecord(Seq("ATGCATGC"), id="Ref")
+        s1 = SeqRecord(Seq("ATGCATGC"), id="S1") # Perfect match
+        s2 = SeqRecord(Seq("ATGCAAAA"), id="S2") # Partial match
+        s3 = SeqRecord(Seq("GGGGGGGG"), id="S3") # Mismatch
+
+        # Simulate user excluding S1
+        exclude_ids = ["S1"]
+        sequences = [ref, s1, s2, s3]
+        sequences_to_search = [s for s in sequences if s.id == "Ref" or s.id not in exclude_ids]
+
+        # S1 should be excluded, so best match should be S2 (next best)
+        best_match, results = find_best_match(sequences_to_search, "Ref", aligner, "DNA")
+
+        self.assertEqual(best_match.id, "S2")
+        self.assertEqual(len(results), 2) # S2 and S3 (Ref is ignored in results)
+        self.assertEqual(results[0]['Sequence ID'], "S2")
 
 if __name__ == '__main__':
     unittest.main()
