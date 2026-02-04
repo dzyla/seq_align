@@ -87,5 +87,40 @@ class TestBestMatchFinder(unittest.TestCase):
         self.assertEqual(len(results), 2) # S2 and S3 (Ref is ignored in results)
         self.assertEqual(results[0]['Sequence ID'], "S2")
 
+    def test_find_best_match_normalized(self):
+        aligner = get_aligner("DNA")
+        ref = SeqRecord(Seq("ATGCATGC"), id="Ref")
+        # Short perfect match
+        s1 = SeqRecord(Seq("ATGC"), id="S1")
+        # Long poor match (but raw score might be high if simple count)
+        # Using simple +1 match, -1 mismatch/gap
+        # Ref: ATGCATGC
+        # S2:  ATGCATGCATGC (Length 12). Matches 8.
+        # S1:  ATGC (Length 4). Matches 4.
+
+        # Note: Default DNA scoring in get_aligner uses NUC.4.4 which is usually match +5, mismatch -4.
+        # But let's rely on relative comparison.
+
+        s2 = SeqRecord(Seq("ATGCATGCATGC"), id="S2")
+
+        sequences = [ref, s1, s2]
+
+        # By raw score, S2 (more matches) should likely beat or tie S1
+        # Actually S2 has 8 matches. S1 has 4 matches.
+        # S2 score ~ 8*match. S1 score ~ 4*match.
+
+        best_match_raw, results_raw = find_best_match(sequences, "Ref", aligner, "DNA", sort_key="Score")
+        # Ensure S2 is ranked higher or equal (raw score)
+        self.assertEqual(best_match_raw.id, "S2")
+
+        # By normalized score:
+        # S2 score / 12 vs S1 score / 4.
+        # (8*match)/12 = 0.66*match.
+        # (4*match)/4 = 1.0*match.
+        # S1 should win.
+
+        best_match_norm, results_norm = find_best_match(sequences, "Ref", aligner, "DNA", sort_key="Normalized Score")
+        self.assertEqual(best_match_norm.id, "S1")
+
 if __name__ == '__main__':
     unittest.main()
