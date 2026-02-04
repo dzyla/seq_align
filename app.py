@@ -476,7 +476,7 @@ def main():
 
         alignment_mode = None
         if sequences:
-            options = ("Pairwise", "MSA", "Best Match Finder", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree")
+            options = ("Pairwise", "MSA", "Best Match Finder", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree", "Translate DNA")
             if input_format in ["PDB", "mmCIF"]:
                 options = ("Extracted Sequences", "Antibody Prediction", "Phylogenetic Tree")
             alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options)
@@ -505,6 +505,11 @@ def main():
             best_match_finder_section(sequences, seq_type)
         elif alignment_mode == "Antibody Prediction":
             antibody_prediction_section(sequences)
+        elif alignment_mode == "Translate DNA":
+            if seq_type == "DNA":
+                dna_translation_section(sequences)
+            else:
+                st.warning("Translation is only available for DNA sequences. Please select DNA as sequence type.")
         elif alignment_mode == "Convert Formats":
             format_conversion_section(sequences, input_format)
         elif alignment_mode == "Phylogenetic Tree":
@@ -1479,6 +1484,11 @@ def best_match_finder_section(sequences, seq_type):
         help="Select sequences to exclude from the best match search."
     )
 
+    regex_exclude = st.text_input(
+        "Exclude Sequences by Regex",
+        help="Enter a regex pattern to exclude sequences (e.g., '^LX' to exclude IDs starting with LX)."
+    )
+
     c1, c2 = st.columns(2)
     open_gap_score = c1.number_input(
         "Open Gap Score",
@@ -1493,6 +1503,12 @@ def best_match_finder_section(sequences, seq_type):
         help="Penalty for extending a gap."
     )
 
+    sort_metric = st.selectbox(
+        "Rank by",
+        ("Score", "Normalized Score"),
+        help="Choose the metric to rank the results."
+    )
+
     # State management for results
     if 'best_match_results' not in st.session_state:
         st.session_state.best_match_results = None
@@ -1505,7 +1521,9 @@ def best_match_finder_section(sequences, seq_type):
         'open_gap_score': open_gap_score,
         'extend_gap_score': extend_gap_score,
         'seq_count': len(sequences),
-        'exclude_ids': tuple(sorted(exclude_ids))
+        'exclude_ids': tuple(sorted(exclude_ids)),
+        'regex_exclude': regex_exclude,
+        'sort_metric': sort_metric
     }
 
     run_analysis = st.button("Find Best Match")
@@ -1518,12 +1536,25 @@ def best_match_finder_section(sequences, seq_type):
                 aligner = get_aligner(seq_type, align_mode.lower(), open_gap_score, extend_gap_score)
 
                 # Filter sequences: keep reference and non-excluded sequences
-                sequences_to_search = [
-                    seq for seq in sequences
-                    if seq.id == reference_id or seq.id not in exclude_ids
-                ]
+                sequences_to_search = []
+                for seq in sequences:
+                    if seq.id == reference_id:
+                        sequences_to_search.append(seq)
+                        continue
 
-                best_match, results = find_best_match(sequences_to_search, reference_id, aligner, seq_type)
+                    if seq.id in exclude_ids:
+                        continue
+
+                    if regex_exclude:
+                        try:
+                            if re.search(regex_exclude, seq.id):
+                                continue
+                        except re.error:
+                            pass  # Ignore invalid regex
+
+                    sequences_to_search.append(seq)
+
+                best_match, results = find_best_match(sequences_to_search, reference_id, aligner, seq_type, sort_key=sort_metric)
 
                 st.session_state.best_match_results = (best_match, results)
                 st.session_state.best_match_params = current_params
@@ -1539,10 +1570,21 @@ def best_match_finder_section(sequences, seq_type):
         st.success(f"🏆 Best Match: **{best_match.id}** with Score: **{results[0]['Score']:.2f}**")
 
         # Detailed Alignment of Best Match
-        with st.expander("Detailed Alignment: Reference vs Best Match", expanded=True):
+        with st.expander("Detailed Alignment", expanded=True):
+            # Allow selecting any sequence from results
+            result_ids = [res['Sequence ID'] for res in results]
+            selected_match_id = st.selectbox(
+                "Select sequence to view alignment against Reference:",
+                result_ids,
+                index=0,
+                key="best_match_detail_selector"
+            )
+
+            selected_match_record = next(s for s in sequences if s.id == selected_match_id)
             ref_seq = next(s for s in sequences if s.id == reference_id)
+
             alignment_text, mutations = perform_pairwise_alignment(
-                ref_seq, best_match, seq_type,
+                ref_seq, selected_match_record, seq_type,
                 align_mode.lower(), open_gap_score, extend_gap_score
             )
             st.code(alignment_text)
@@ -1589,7 +1631,7 @@ def best_match_finder_section(sequences, seq_type):
         st.subheader("📋 Results Table")
 
         # Reorder columns
-        display_cols = ['Rank', 'Sequence ID', 'Score', 'Length']
+        display_cols = ['Rank', 'Sequence ID', 'Score', 'Length', 'Normalized Score']
         st.dataframe(df_results[display_cols], use_container_width=True)
 
         # Download results
@@ -1666,7 +1708,7 @@ def calculate_alignment_score(aligner, seq1, seq2, seq_type):
     return aligner.score(Seq(seq1_clean), Seq(seq2_clean))
 
 
-def find_best_match(sequences, reference_id, aligner, seq_type):
+def find_best_match(sequences, reference_id, aligner, seq_type, sort_key="Score"):
     """
     Find the best matching sequence against a reference sequence.
 
@@ -1675,6 +1717,7 @@ def find_best_match(sequences, reference_id, aligner, seq_type):
         reference_id (str): ID of the reference sequence.
         aligner (Bio.Align.PairwiseAligner): Configured aligner.
         seq_type (str): 'DNA' or 'Protein'.
+        sort_key (str): Key to sort results by ('Score' or 'Normalized Score').
 
     Returns:
         tuple: (best_match_record, results_list)
@@ -1696,18 +1739,22 @@ def find_best_match(sequences, reference_id, aligner, seq_type):
         if score is None:
             continue
 
+        length = len(seq.seq)
+        normalized_score = score / length if length > 0 else 0
+
         results.append({
             'Sequence ID': seq.id,
             'Score': score,
-            'Length': len(seq.seq),
+            'Length': length,
+            'Normalized Score': normalized_score
             # 'sequence': seq # Store record if needed, but keeping it simple for dataframe
         })
 
     if not results:
         return None, []
 
-    # Sort by score descending
-    results.sort(key=lambda x: x['Score'], reverse=True)
+    # Sort by sort_key descending
+    results.sort(key=lambda x: x.get(sort_key, x['Score']), reverse=True)
 
     # Add Rank
     for i, res in enumerate(results):
@@ -2122,6 +2169,141 @@ def compute_distance(seq1, seq2, seq_type):
 
     distance = differences / valid_positions
     return distance
+
+
+def dna_translation_section(sequences):
+    """
+    Handles the DNA Translation workflow.
+    """
+    st.header("🧬 DNA Translation & ORF Finder")
+    st.info("Translate DNA sequences to protein and find Open Reading Frames (ORFs).")
+
+    if not sequences:
+        st.warning("Please upload DNA sequences.")
+        return
+
+    # Select sequence
+    seq_ids = [seq.id for seq in sequences]
+    selected_id = st.selectbox("Select Sequence", seq_ids)
+
+    selected_seq = next(s for s in sequences if s.id == selected_id)
+
+    # Display Original DNA
+    with st.expander("Original DNA Sequence", expanded=False):
+        st.code(str(selected_seq.seq))
+
+    # Standard Translation (Frame +1)
+    st.subheader("Translation (Frame +1)")
+
+    # Clean sequence
+    dna_seq = str(selected_seq.seq).upper()
+    valid_chars = set('ATGCNRYKMSWBDHV')
+    clean_seq = ''.join(c for c in dna_seq if c in valid_chars)
+
+    # Translate
+    remainder = len(clean_seq) % 3
+    if remainder:
+        clean_seq_tr = clean_seq[:-remainder]
+    else:
+        clean_seq_tr = clean_seq
+
+    try:
+        protein_seq = Seq(clean_seq_tr).translate()
+        st.code(str(protein_seq))
+    except Exception as e:
+        st.error(f"Error during translation: {e}")
+
+    st.markdown("### 🕵️ ORF Finder")
+    min_len = st.number_input("Minimum ORF Length (AA)", value=30, min_value=10, step=5)
+
+    if st.button("Find ORFs"):
+        orfs = find_orfs(str(selected_seq.seq).upper(), min_len=min_len)
+
+        if orfs:
+            st.success(f"Found {len(orfs)} ORFs.")
+            df = pd.DataFrame(orfs)
+            st.dataframe(df)
+
+            # Download
+            csv = df.to_csv(index=False)
+            st.download_button("Download ORFs (CSV)", csv, "orfs.csv", "text/csv")
+
+            # Detailed view
+            st.subheader("ORF Sequences")
+            for index, row in df.iterrows():
+                with st.expander(f"Frame {row['Frame']}, Start {row['Start (AA)']}, Length {row['Length (AA)']}"):
+                    st.code(row['Sequence'])
+        else:
+            st.warning("No ORFs found with current settings.")
+
+
+def find_orfs(sequence, min_len=30):
+    """
+    Find Open Reading Frames (ORFs) in a DNA sequence.
+    Searches all 6 reading frames.
+
+    Parameters:
+        sequence (str): DNA sequence.
+        min_len (int): Minimum length of the protein (in amino acids).
+
+    Returns:
+        list: List of dictionaries containing ORF details.
+    """
+    orfs = []
+    seq_obj = Seq(sequence)
+
+    frames = [1, 2, 3, -1, -2, -3]
+
+    for frame in frames:
+        if frame > 0:
+            nucleotide_seq = seq_obj[frame - 1:]
+            frame_label = f"+{frame}"
+        else:
+            nucleotide_seq = seq_obj.reverse_complement()[abs(frame) - 1:]
+            frame_label = f"{frame}"
+
+        # Translate
+        n_len = len(nucleotide_seq)
+        remainder = n_len % 3
+        if remainder > 0:
+            nucleotide_seq = nucleotide_seq[:-remainder]
+
+        if len(nucleotide_seq) == 0:
+            continue
+
+        protein_seq = nucleotide_seq.translate(table=1)  # Standard code
+        protein_str = str(protein_seq)
+
+        aa_start = 0
+        while aa_start < len(protein_str):
+            # Find next Met
+            met_index = protein_str.find('M', aa_start)
+            if met_index == -1:
+                break
+
+            # Find next Stop after Met
+            stop_index = protein_str.find('*', met_index)
+
+            if stop_index != -1:
+                # Found an ORF
+                length_aa = stop_index - met_index
+                if length_aa >= min_len:
+                    orf_seq = protein_str[met_index:stop_index]
+
+                    orfs.append({
+                        "Frame": frame_label,
+                        "Start (AA)": met_index + 1,
+                        "End (AA)": stop_index + 1,
+                        "Length (AA)": length_aa,
+                        "Sequence": orf_seq
+                    })
+
+                # Move start to find nested ORFs
+                aa_start = met_index + 1
+            else:
+                break
+
+    return orfs
 
 
 if __name__ == "__main__":
