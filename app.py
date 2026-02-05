@@ -279,9 +279,27 @@ def calculate_representative_sequence(alignment, threshold=0.7):
         tuple: (consensus_record, closest_record, min_differences, closest_seq_id)
     """
     # Calculate the consensus sequence
-    summary = AlignInfo.SummaryInfo(alignment)
-    consensus = summary.dumb_consensus(threshold=threshold, ambiguous='X')
-    consensus_seq = str(consensus)
+    consensus_seq_list = []
+    length = alignment.get_alignment_length()
+    for i in range(length):
+        column = alignment[:, i]
+        counts = {}
+        for char in column:
+            counts[char] = counts.get(char, 0) + 1
+
+        max_count = 0
+        most_freq = 'X'
+        for char, count in counts.items():
+            if count > max_count:
+                max_count = count
+                most_freq = char
+
+        if max_count / len(column) >= threshold:
+            consensus_seq_list.append(most_freq)
+        else:
+            consensus_seq_list.append('X')
+
+    consensus_seq = "".join(consensus_seq_list)
 
     # Find the sequence closest to the consensus
     def count_differences(seq1, seq2):
@@ -476,9 +494,9 @@ def main():
 
         alignment_mode = None
         if sequences:
-            options = ("Pairwise", "MSA", "Best Match Finder", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree", "Translate DNA")
+            options = ("Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree", "Translate DNA")
             if input_format in ["PDB", "mmCIF"]:
-                options = ("Extracted Sequences", "Antibody Prediction", "Phylogenetic Tree")
+                options = ("Extracted Sequences", "Sequence Clustering", "Antibody Prediction", "Phylogenetic Tree")
             alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options)
         elif tree:
             alignment_mode = "Phylogenetic Tree"
@@ -503,6 +521,8 @@ def main():
             msa_section(sequences, seq_type)
         elif alignment_mode == "Best Match Finder":
             best_match_finder_section(sequences, seq_type)
+        elif alignment_mode == "Sequence Clustering":
+            sequence_clustering_section(sequences, seq_type)
         elif alignment_mode == "Antibody Prediction":
             antibody_prediction_section(sequences)
         elif alignment_mode == "Translate DNA":
@@ -1465,7 +1485,7 @@ def best_match_finder_section(sequences, seq_type):
     with col1:
         reference_id = st.selectbox(
             "Select Reference Sequence",
-            [seq.id for seq in sequences],
+            [seq.id for seq in sequences][::-1],
             help="The sequence to compare all others against."
         )
 
@@ -1779,9 +1799,34 @@ def phylogenetic_tree_section(tree):
 
     # Visualization
     st.subheader("📊 Tree Visualization")
-    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Calculate reasonable default height based on number of terminals (leaves)
+    terminals = tree.get_terminals()
+    default_height = max(8, len(terminals) * 0.2)
+
+    with st.expander("Tree Display Settings"):
+        col_set1, col_set2 = st.columns(2)
+        with col_set1:
+            tree_height = st.number_input("Tree Height", value=float(default_height), min_value=5.0, help="Increase this if labels are overlapping vertically.")
+            tree_width = st.number_input("Tree Width", value=12.0, min_value=5.0, help="Width of the plot.")
+        with col_set2:
+            font_size = st.slider("Font Size", 6, 20, 10, help="Font size for labels.")
+            show_labels = st.checkbox("Show Labels", value=True)
+            show_inner_labels = st.checkbox("Show Inner Node Labels", value=False, help="Show labels for internal nodes (e.g., bootstrap values or node names).")
+
+    # Update font size
+    plt.rcParams.update({'font.size': font_size})
+
+    fig, ax = plt.subplots(figsize=(tree_width, tree_height))
     try:
-        Phylo.draw(tree, axes=ax, do_show=False, show_confidence=False)
+        # Define label function to control visibility
+        def label_func(node):
+            if node.is_terminal():
+                return str(node) if show_labels else ''
+            else:
+                return str(node) if show_inner_labels else ''
+
+        Phylo.draw(tree, axes=ax, do_show=False, show_confidence=False, label_func=label_func)
 
         ax.set_title("Phylogenetic Tree", fontsize=16)
         ax.spines['top'].set_visible(False)
@@ -1792,7 +1837,7 @@ def phylogenetic_tree_section(tree):
         st.pyplot(fig)
 
         buf = BytesIO()
-        fig.savefig(buf, format="png", bbox_inches='tight')
+        fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
         buf.seek(0)
         st.download_button(
             label="📥 Download Tree Image (PNG)",
@@ -2121,7 +2166,7 @@ def build_phylogenetic_tree(sequences, seq_type):
         matrix = []
         for i, seq1 in enumerate(sequences):
             row = []
-            for seq2 in sequences[:i]:
+            for seq2 in sequences[:i + 1]:
                 distance = compute_distance(seq1.seq, seq2.seq, seq_type)
                 row.append(distance)
             matrix.append(row)
@@ -2304,6 +2349,230 @@ def find_orfs(sequence, min_len=30):
                 break
 
     return orfs
+
+
+def sequence_clustering_section(sequences, seq_type):
+    """
+    Handles the Sequence Clustering workflow.
+    """
+    st.header("🧩 Sequence Clustering")
+    st.info("Group similar sequences together based on pairwise similarity.")
+
+    if len(sequences) < 2:
+        st.warning("Need at least 2 sequences to perform clustering.")
+        return
+
+    # Controls
+    col1, col2 = st.columns(2)
+    with col1:
+        method = st.selectbox(
+            "Similarity Method",
+            ("Fast (MSA-based)", "Accurate (Pairwise)"),
+            help="Fast uses MSA to estimate similarity. Accurate performs N*N pairwise alignments."
+        )
+    with col2:
+        threshold = st.slider(
+            "Similarity Threshold",
+            0.0, 1.0, 0.8, 0.05,
+            help="Sequences with similarity >= threshold will be grouped together."
+        )
+
+    align_mode = "global"
+    if method == "Accurate (Pairwise)":
+        align_mode = st.selectbox(
+            "Pairwise Alignment Mode",
+            ("Global", "Local"),
+            index=0
+        )
+
+    if st.button("Run Clustering"):
+        with st.spinner("Calculating similarity matrix and clustering..."):
+            similarity_matrix, ids = calculate_similarity_matrix(sequences, method, seq_type, align_mode)
+
+            if similarity_matrix is not None:
+                # Find clusters
+                clusters = find_clusters(similarity_matrix, ids, threshold)
+
+                # Visualization
+
+                # 1. Heatmap
+                st.subheader("🔥 Similarity Heatmap")
+                fig = go.Figure(data=go.Heatmap(
+                    z=similarity_matrix,
+                    x=ids,
+                    y=ids,
+                    colorscale="Viridis",
+                    zmin=0, zmax=1
+                ))
+                fig.update_layout(
+                    title="Pairwise Similarity Matrix",
+                    xaxis_showticklabels=False,
+                    yaxis_showticklabels=False,
+                    height=600
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 2. Clusters
+                st.subheader(f"📦 Clusters (Threshold: {threshold})")
+                st.write(f"Found {len(clusters)} clusters.")
+
+                cluster_data = []
+                for idx, cluster in enumerate(clusters, 1):
+                    cluster_data.append({
+                        "Cluster ID": idx,
+                        "Count": len(cluster),
+                        "Sequences": ", ".join(cluster)
+                    })
+
+                df_clusters = pd.DataFrame(cluster_data)
+                st.dataframe(df_clusters, use_container_width=True)
+
+                st.download_button(
+                    "📥 Download Clusters (CSV)",
+                    df_clusters.to_csv(index=False),
+                    "clusters.csv",
+                    "text/csv"
+                )
+
+def calculate_similarity_matrix(sequences, method, seq_type, align_mode="global"):
+    """
+    Calculate N*N similarity matrix.
+    """
+    n = len(sequences)
+    ids = [seq.id for seq in sequences]
+    matrix = np.zeros((n, n))
+
+    try:
+        if method == "Fast (MSA-based)":
+            # Run MSA first
+            msa_text, _ = perform_msa(sequences, ids[0], seq_type, "fasta")
+            if not msa_text:
+                return None, None
+
+            alignment = AlignIO.read(StringIO(msa_text), "fasta")
+            # Ensure order matches sequences
+            # Create a map of id -> sequence string from alignment
+            aln_dict = {rec.id: str(rec.seq) for rec in alignment}
+
+            # Reorder aligned sequences to match input 'ids' order
+            aligned_seqs = [aln_dict.get(seq_id, "") for seq_id in ids]
+
+            # Compute identity
+            for i in range(n):
+                matrix[i, i] = 1.0
+                for j in range(i + 1, n):
+                    s1 = aligned_seqs[i]
+                    s2 = aligned_seqs[j]
+                    if not s1 or not s2:
+                        continue
+
+                    matches = sum(1 for a, b in zip(s1, s2) if a == b and a != '-')
+                    length = sum(1 for a, b in zip(s1, s2) if a != '-' or b != '-') # Union length (or just use alignment length?)
+                    # Standard identity: matches / alignment_length (including gaps)
+                    # Often for clustering, matches / min_len is used, or matches / (matches + mismatches + gaps)
+                    # Let's use matches / alignment_length for simplicity as they are aligned.
+
+                    score = matches / len(s1) if len(s1) > 0 else 0
+                    matrix[i, j] = matrix[j, i] = score
+
+        else: # Pairwise
+            # Use stricter gap penalties for clustering to prefer mismatches over gaps for single substitutions
+            aligner = get_aligner(seq_type, align_mode.lower(), -10.0, -0.5)
+
+            # Create progress bar
+            progress_bar = st.progress(0)
+            total_pairs = (n * (n - 1)) // 2
+            current_pair = 0
+
+            for i in range(n):
+                matrix[i, i] = 1.0
+                for j in range(i + 1, n):
+                    score = calculate_alignment_score(aligner, sequences[i], sequences[j], seq_type)
+
+                    # Normalize score
+                    # Max score estimate: align sequence against itself
+                    # Ideally we align s1 vs s1 and s2 vs s2.
+                    # Approx normalization: score / min(self_score1, self_score2)
+
+                    # Optimization: Pre-calculate self-scores?
+                    # For now, let's just use length normalization for simplicity
+                    # or re-score self if needed. But simpler:
+                    # Local alignment score can be arbitrary.
+                    # Global alignment: matches - gaps...
+                    # Let's use a simplified identity-like metric if possible,
+                    # but 'calculate_alignment_score' returns raw score.
+
+                    # Calculate self scores (could cache this)
+                    # But pairwise mode is "Accurate", so let's try to be somewhat accurate.
+                    # Using min_length as denominator for raw score might be > 1 if match reward > 1.
+                    # Bio.Align uses substitution matrices.
+
+                    # Better Approach for Pairwise Similarity:
+                    # 1. Align
+                    # 2. Count matches in alignment
+                    # 3. Divide by length
+
+                    # But 'calculate_alignment_score' only returns score.
+                    # We need the alignment object to count matches.
+
+                    alignments = aligner.align(sequences[i], sequences[j])
+                    if not alignments:
+                        sim = 0
+                    else:
+                        aln = alignments[0]
+                        # Calculate identity from alignment
+                        # alignment object has .counts() ? No.
+                        # aln.substitutions ?
+                        # Let's stringify
+                        # This is slow. But that's what "Accurate/Slow" implies.
+                        s1_aln = str(aln[0])
+                        s2_aln = str(aln[1])
+                        matches = sum(1 for a, b in zip(s1_aln, s2_aln) if a == b and a != '-')
+                        # Length: length of alignment? or min length of unaligned?
+                        # Usually matches / alignment_length
+                        sim = matches / len(s1_aln)
+
+                    matrix[i, j] = matrix[j, i] = sim
+
+                    current_pair += 1
+                    if total_pairs > 0 and current_pair % 10 == 0:
+                        progress_bar.progress(current_pair / total_pairs)
+
+            progress_bar.empty()
+
+        return matrix, ids
+
+    except Exception as e:
+        st.error(f"Error calculating similarity: {e}")
+        return None, None
+
+def find_clusters(similarity_matrix, ids, threshold):
+    """
+    Find connected components in the similarity graph.
+    """
+    n = len(ids)
+    visited = [False] * n
+    clusters = []
+
+    for i in range(n):
+        if not visited[i]:
+            # Start BFS/DFS
+            component = []
+            queue = [i]
+            visited[i] = True
+
+            while queue:
+                curr = queue.pop(0)
+                component.append(ids[curr])
+
+                for j in range(n):
+                    if not visited[j] and similarity_matrix[curr, j] >= threshold:
+                        visited[j] = True
+                        queue.append(j)
+
+            clusters.append(component)
+
+    return clusters
 
 
 if __name__ == "__main__":
