@@ -8,7 +8,8 @@ from Bio import Align
 # Add parent directory to path to import app
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import get_aligner, calculate_alignment_score, find_best_match
+from modules.pairwise import get_aligner, calculate_alignment_score
+from modules.best_match import find_best_match
 
 class TestBestMatchFinder(unittest.TestCase):
 

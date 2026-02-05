@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from app import calculate_similarity_matrix, find_clusters
+from modules.clustering import calculate_similarity_matrix_pairwise, find_clusters
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
@@ -25,8 +25,7 @@ class TestClustering(unittest.TestCase):
         self.assertIn(["seq3"], clusters)
 
     def test_pairwise_similarity(self):
-        # Test the "Accurate (Pairwise)" path
-        matrix, ids = calculate_similarity_matrix(self.sequences, "Accurate (Pairwise)", "DNA", "Global")
+        matrix, ids = calculate_similarity_matrix_pairwise(self.sequences, "DNA", "Global")
 
         self.assertIsNotNone(matrix)
         self.assertEqual(ids, ["seq1", "seq2", "seq3", "seq4"])
