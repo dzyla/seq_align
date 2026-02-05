@@ -2,12 +2,13 @@ import unittest
 import sys
 import os
 
-# Add parent directory to path to import app
+# Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from app import parse_sequences_from_text, perform_pairwise_alignment
+from modules.parsers import parse_sequences_from_text
+from modules.pairwise import perform_pairwise_alignment
 
 class TestAppLogic(unittest.TestCase):
 
