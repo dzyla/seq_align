@@ -150,10 +150,10 @@ def compute_distance(seq1, seq2, seq_type):
     aligner = get_aligner(seq_type, mode='global', open_gap_score=-0.5, extend_gap_score=-0.1)
 
     alignments = aligner.align(seq1, seq2)
-    if not alignments:
+    try:
+        alignment = next(alignments)
+    except StopIteration:
         return 1.0
-
-    alignment = next(alignments)
     aligned_seq1 = str(alignment[0])
     aligned_seq2 = str(alignment[1])
 

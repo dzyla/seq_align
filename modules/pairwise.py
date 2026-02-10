@@ -221,10 +221,10 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
         # Perform the alignment with cleaned sequences
         alignments = aligner.align(cleaned_seq1, cleaned_seq2)
 
-        if not alignments:
+        try:
+            alignment = next(alignments)
+        except StopIteration:
             return "No alignments found. Sequences may be too dissimilar.", []
-
-        alignment = next(alignments)
 
         # Get the alignment as strings with gaps
         aligned_seq1_str = str(alignment[0])
