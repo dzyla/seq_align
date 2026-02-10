@@ -408,10 +408,8 @@ def calculate_similarity_matrix_pairwise(sequences, seq_type, align_mode):
         # Optimization: Calculate only upper triangle (i < j) and mirror results
         for j in range(i + 1, n):
             alignments = aligner.align(sequences[i], sequences[j])
-            if not alignments:
-                sim = 0
-            else:
-                aln = alignments[0]
+            try:
+                aln = next(alignments)
                 s1_aln = str(aln[0])
                 # Count matches
                 matches = sum(1 for a, b in zip(str(aln[0]), str(aln[1])) if a == b and a != '-')
@@ -419,6 +417,8 @@ def calculate_similarity_matrix_pairwise(sequences, seq_type, align_mode):
                 # or length of longer sequence?
                 # Usually matches / alignment_length is good for identity
                 sim = matches / len(s1_aln) if len(s1_aln) > 0 else 0
+            except StopIteration:
+                sim = 0
 
             matrix[i, j] = matrix[j, i] = sim
 
