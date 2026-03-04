@@ -62,6 +62,22 @@ def pairwise_alignment_section(sequences, seq_type):
             help="Second sequence for alignment"
         )
 
+    is_circular_ref = False
+    is_circular_target = False
+
+    if seq_type == "DNA":
+        c_ref, c_tgt = st.columns(2)
+        with c_ref:
+            is_circular_ref = st.checkbox(
+                "Reference is Circular",
+                help="Consider the reference DNA sequence as circular to find the best starting alignment point."
+            )
+        with c_tgt:
+            is_circular_target = st.checkbox(
+                "Target is Circular",
+                help="Consider the target DNA sequence as circular to find the best starting alignment point."
+            )
+
     # Store the current selections in session state
     st.session_state.reference_id = reference_id
     st.session_state.target_id = target_id
@@ -109,7 +125,9 @@ def pairwise_alignment_section(sequences, seq_type):
         'seq_type': seq_type,
         'align_mode': align_mode.lower(),
         'open_gap_score': open_gap_score,
-        'extend_gap_score': extend_gap_score
+        'extend_gap_score': extend_gap_score,
+        'is_circular_ref': is_circular_ref,
+        'is_circular_target': is_circular_target
     }
 
     # Check if parameters have changed
@@ -123,7 +141,8 @@ def pairwise_alignment_section(sequences, seq_type):
         if run_alignment or params_changed:
             with st.spinner("Performing pairwise alignment..."):
                 alignment_text, mutations = perform_pairwise_alignment(
-                    seq1, seq2, seq_type, align_mode.lower(), open_gap_score, extend_gap_score
+                    seq1, seq2, seq_type, align_mode.lower(), open_gap_score, extend_gap_score,
+                    is_circular_ref, is_circular_target
                 )
                 st.session_state.alignment_text = alignment_text
                 st.session_state.pairwise_mutations = mutations
@@ -182,7 +201,7 @@ def pairwise_alignment_section(sequences, seq_type):
             mime="text/plain"
         )
 
-def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-0.1):
+def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-0.1, is_circular1=False, is_circular2=False):
     """
     Perform pairwise alignment using Biopython's Align.PairwiseAligner.
 
@@ -193,6 +212,8 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
         mode (str): Alignment mode ('global', 'local', or 'overlap')
         open_gap_score (float): Score for opening a gap
         extend_gap_score (float): Score for extending a gap
+        is_circular1 (bool): Whether the first sequence is circular
+        is_circular2 (bool): Whether the second sequence is circular
 
     Returns:
         tuple: (alignment_text, mutations) - Formatted alignment text and list of mutations
@@ -210,6 +231,41 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
 
         if not seq1_str or not seq2_str:
              return "One or both sequences are empty after cleaning.", []
+
+        circular_msg = ""
+        # Optimize starting positions for circular sequences
+        if is_circular1 or is_circular2:
+
+            # Use local alignment to find best starting points
+            opt_aligner = get_aligner(seq_type, "local", open_gap_score, extend_gap_score)
+
+            s1_opt = seq1_str + seq1_str if is_circular1 else seq1_str
+            s2_opt = seq2_str + seq2_str if is_circular2 else seq2_str
+
+            opt_alignments = opt_aligner.align(Seq(s1_opt), Seq(s2_opt))
+            try:
+                opt_aln = next(opt_alignments)
+                seq1_start = opt_aln.aligned[0][0][0]
+                seq2_start = opt_aln.aligned[1][0][0]
+
+                rot1 = 0
+                rot2 = 0
+
+                if is_circular1 and is_circular2:
+                    rot2 = (seq2_start - seq1_start) % len(seq2_str)
+                elif is_circular1:
+                    rot1 = (seq1_start - seq2_start) % len(seq1_str)
+                elif is_circular2:
+                    rot2 = (seq2_start - seq1_start) % len(seq2_str)
+
+                if rot1 > 0:
+                    seq1_str = seq1_str[int(rot1):] + seq1_str[:int(rot1)]
+                    circular_msg += f"\nNote: Reference sequence was circularly shifted by {int(rot1)} positions to optimize alignment."
+                if rot2 > 0:
+                    seq2_str = seq2_str[int(rot2):] + seq2_str[:int(rot2)]
+                    circular_msg += f"\nNote: Target sequence was circularly shifted by {int(rot2)} positions to optimize alignment."
+            except StopIteration:
+                pass
 
         # Create new Seq objects with the cleaned sequences
         cleaned_seq1 = Seq(seq1_str)
@@ -238,6 +294,9 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
 
         # Format alignment display
         alignment_text = format_alignment_display(seq1.id, aligned_seq1_str, match_line, seq2.id, aligned_seq2_str, alignment.score)
+
+        if circular_msg:
+            alignment_text += "\n" + circular_msg + "\n"
 
         return alignment_text, mutations
     except Exception as e:
