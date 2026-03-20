@@ -12,6 +12,8 @@ from modules.antibody import antibody_prediction_section
 from modules.conversion import format_conversion_section
 from modules.phylogeny import phylogenetic_tree_section, build_phylogenetic_tree
 from modules.dna import dna_translation_section
+from modules.pdb_renumber import pdb_renumber_section
+
 
 def handle_input(input_format):
     """
@@ -144,11 +146,16 @@ def main():
     if (sequences and len(sequences) > 0) or tree:
         seq_type = None
         if sequences:
+            # PDB sequences are always protein
+            default_index = 1
+            if input_format in ["PDB", "mmCIF"]:
+                default_index = 1
+
             seq_type = st.sidebar.selectbox(
                 "🔬 Select Sequence Type",
                 ("DNA", "Protein"),
                 help="Choose whether your sequences are DNA or Protein.",
-                index=1
+                index=default_index
             )
             if 'seq_type' not in st.session_state or st.session_state.seq_type != seq_type:
                 st.session_state.seq_type = seq_type
@@ -163,9 +170,9 @@ def main():
 
         alignment_mode = None
         if sequences:
-            options = ("Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree", "Translate DNA")
+            options = ("Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree", "Translate DNA", "PDB Residue Renumbering")
             if input_format in ["PDB", "mmCIF"]:
-                options = ("Extracted Sequences", "Sequence Clustering", "Antibody Prediction", "Phylogenetic Tree")
+                options = ("Extracted Sequences", "Sequence Clustering", "Antibody Prediction", "Phylogenetic Tree", "PDB Residue Renumbering")
             alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options)
         elif tree:
             alignment_mode = "Phylogenetic Tree"
@@ -201,6 +208,8 @@ def main():
                 st.warning("Translation is only available for DNA sequences. Please select DNA as sequence type.")
         elif alignment_mode == "Convert Formats":
             format_conversion_section(sequences, input_format)
+        elif alignment_mode == "PDB Residue Renumbering":
+            pdb_renumber_section(sequences)
         elif alignment_mode == "Phylogenetic Tree":
             if tree:
                 phylogenetic_tree_section(tree)

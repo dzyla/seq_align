@@ -141,6 +141,7 @@ def sequence_clustering_section(sequences, seq_type):
         )
 
         clusters = []
+        threshold = None
 
         if clustering_method == "Similarity Threshold":
             # Auto-detect threshold from histogram (last bin)
@@ -254,7 +255,7 @@ def sequence_clustering_section(sequences, seq_type):
                 df_pca['Cluster'] = [id_to_cluster.get(x, "Unknown") for x in ids]
 
                 title_text = f"PCA of Sequences (Method: {clustering_method})"
-                if clustering_method == "Similarity Threshold":
+                if clustering_method == "Similarity Threshold" and threshold is not None:
                      title_text = f"PCA of Sequences (Clustered at {threshold:.2f})"
 
                 fig_pca = px.scatter(
@@ -328,7 +329,7 @@ def sequence_clustering_section(sequences, seq_type):
             similarities = matrix[upper_tri_indices]
 
             fig_hist = go.Figure(data=[go.Histogram(x=similarities, nbinsx=50)])
-            if clustering_method == "Similarity Threshold":
+            if clustering_method == "Similarity Threshold" and threshold is not None:
                 fig_hist.add_vline(x=threshold, line_dash="dash", line_color="red", annotation_text="Threshold")
             fig_hist.update_layout(
                 title="Distribution of Pairwise Similarities",
