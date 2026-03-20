@@ -67,6 +67,7 @@ def handle_input(input_format):
             # Clear sequences if no files are uploaded
             if 'sequences' in st.session_state:
                 st.session_state.sequences = None
+        uploaded_file = uploaded_files[0] if uploaded_files else None
     elif input_format == "Newick":
         uploaded_file = st.sidebar.file_uploader(
             "Upload Newick Tree File",
@@ -209,7 +210,7 @@ def main():
         elif alignment_mode == "Convert Formats":
             format_conversion_section(sequences, input_format)
         elif alignment_mode == "PDB Residue Renumbering":
-            pdb_renumber_section(sequences)
+            pdb_renumber_section(uploaded_file, input_format)
         elif alignment_mode == "Phylogenetic Tree":
             if tree:
                 phylogenetic_tree_section(tree)

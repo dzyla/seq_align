@@ -3,12 +3,14 @@ import io
 import os
 import tempfile
 import traceback
-from Bio.PDB import PDBParser, PDBIO
+from Bio.PDB import PDBParser, PDBIO, MMCIFParser
+from Bio.PDB.mmcifio import MMCIFIO
 from Bio.PDB.Structure import Structure
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from pyfamsa import Aligner as PyFAMSAAligner, Sequence as PyFAMSASequence
 from modules.utils import amino_acid_map
+from modules.parsers import parse_sequences_from_text, parse_sequences_from_file
 
 def align_with_pyfamsa(seq1_id, seq1_str, seq2_id, seq2_str):
     """
@@ -52,34 +54,40 @@ def get_mapping_from_alignment(aligned_target, aligned_chain):
 
     return mapping
 
-def pdb_renumber_section(target_sequences):
+def pdb_renumber_section(pdb_file, pdb_format):
     """
     UI and workflow for PDB Residue Renumbering based on a target sequence.
     """
     st.header("🔢 PDB Residue Renumbering")
     st.info(
-        "Upload a PDB file. We will match its chains to your uploaded target sequences (FASTA) "
+        "Upload target sequences (FASTA). We will match its chains to your uploaded PDB file "
         "and renumber the PDB residues to match the target sequences perfectly (1-based index). "
         "Gaps or unmodeled regions will be skipped."
     )
 
-    if not target_sequences:
-        st.warning("Please upload target sequences (FASTA) in the sidebar first.")
+    if not pdb_file:
+        st.warning(f"Please upload a {pdb_format} file in the sidebar first.")
         return
 
-    pdb_file = st.file_uploader(
-        "Upload PDB File to Renumber",
-        type=["pdb", "ent"],
-        help="Upload the PDB file you want to renumber based on the target sequences"
-    )
+    target_sequences = None
+    target_fasta_text = st.text_area("Paste Target Sequences (FASTA format)")
+    target_fasta_file = st.file_uploader("Or Upload Target FASTA File", type=["fasta", "fas", "txt"])
 
-    if pdb_file:
+    if target_fasta_file:
+        target_sequences, error = parse_sequences_from_file(target_fasta_file, "fasta")
+        if error: st.error(error)
+    elif target_fasta_text:
+        target_sequences, error = parse_sequences_from_text(target_fasta_text)
+        if error: st.error(error)
+
+    if target_sequences:
         # Cache the alignment processing to avoid rerunning when UI updates
-        if 'pdb_renumber_results' not in st.session_state or st.session_state.pdb_renumber_file != pdb_file.name:
+        current_hash = hash(str([str(s.seq) for s in target_sequences]))
+        if 'pdb_renumber_results' not in st.session_state or st.session_state.get('pdb_renumber_file') != pdb_file.name or st.session_state.get('pdb_renumber_hash') != current_hash:
             with st.spinner("Processing PDB and matching sequences with PyFAMSA..."):
                 try:
                     pdb_file.seek(0)
-                    parser = PDBParser(QUIET=True)
+                    parser = MMCIFParser(QUIET=True) if pdb_format == "mmCIF" else PDBParser(QUIET=True)
 
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdb") as temp_file:
                         temp_file.write(pdb_file.read())
@@ -100,6 +108,7 @@ def pdb_renumber_section(target_sequences):
                         'visuals': alignment_visuals,
                     }
                     st.session_state.pdb_renumber_file = pdb_file.name
+                    st.session_state.pdb_renumber_hash = current_hash
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
                     st.text(traceback.format_exc())
@@ -125,19 +134,22 @@ def pdb_renumber_section(target_sequences):
                 with st.spinner("Renumbering PDB residues..."):
                     renumbered_structure = apply_renumbering(results['structure'], results['mappings'])
 
-                    io_out = PDBIO()
+                    io_out = MMCIFIO() if pdb_format == "mmCIF" else PDBIO()
                     io_out.set_structure(renumbered_structure)
 
                     out_stream = io.StringIO()
                     io_out.save(out_stream)
                     pdb_content = out_stream.getvalue()
 
+                    ext = ".cif" if pdb_format == "mmCIF" else ".pdb"
+                    mime_type = "chemical/x-mmcif" if pdb_format == "mmCIF" else "chemical/x-pdb"
+
                     st.success("Renumbering completed successfully!")
                     st.download_button(
-                        label="📥 Download Renumbered PDB",
+                        label=f"📥 Download Renumbered {pdb_format}",
                         data=pdb_content,
-                        file_name=f"{pdb_file.name.split('.')[0]}_renumbered.pdb",
-                        mime="chemical/x-pdb"
+                        file_name=f"{pdb_file.name.split('.')[0]}_renumbered{ext}",
+                        mime=mime_type
                     )
 
 def prepare_renumbering(structure: Structure, target_sequences: list):
