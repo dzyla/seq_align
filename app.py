@@ -13,6 +13,8 @@ from modules.conversion import format_conversion_section
 from modules.phylogeny import phylogenetic_tree_section, build_phylogenetic_tree
 from modules.dna import dna_translation_section
 from modules.pdb_renumber import pdb_renumber_section
+from modules.pdb_single_chain import pdb_single_chain_section
+
 
 
 def handle_input(input_format):
@@ -171,9 +173,9 @@ def main():
 
         alignment_mode = None
         if sequences:
-            options = ("Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree", "Translate DNA", "PDB Residue Renumbering")
+            options = ("Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Antibody Prediction", "Convert Formats", "Phylogenetic Tree", "Translate DNA", "PDB Residue Renumbering", "PDB Single Chain Processing")
             if input_format in ["PDB", "mmCIF"]:
-                options = ("Extracted Sequences", "Sequence Clustering", "Antibody Prediction", "Phylogenetic Tree", "PDB Residue Renumbering")
+                options = ("Extracted Sequences", "Sequence Clustering", "Antibody Prediction", "Phylogenetic Tree", "PDB Residue Renumbering", "PDB Single Chain Processing")
             alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options)
         elif tree:
             alignment_mode = "Phylogenetic Tree"
@@ -211,6 +213,8 @@ def main():
             format_conversion_section(sequences, input_format)
         elif alignment_mode == "PDB Residue Renumbering":
             pdb_renumber_section(uploaded_file, input_format)
+        elif alignment_mode == "PDB Single Chain Processing":
+            pdb_single_chain_section(uploaded_file, input_format)
         elif alignment_mode == "Phylogenetic Tree":
             if tree:
                 phylogenetic_tree_section(tree)
