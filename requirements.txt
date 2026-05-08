@@ -9,3 +9,6 @@ kaleido
 pyfamsa==0.3.2
 pandas
 scikit-learn
+
+biopandas
+MDAnalysis
