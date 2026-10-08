@@ -54,3 +54,12 @@ def test_tree_from_alignment_upgma():
 def test_identical_sequences_give_tree_with_all_leaves(method):
     tree = build_phylogenetic_tree([rec("a", "MKV"), rec("b", "MKV"), rec("c", "MKV")], "Protein", method=method)
     assert sorted(t.name for t in tree.get_terminals()) == ["a", "b", "c"]
+
+
+def test_tree_to_newick_roundtrip():
+    from io import StringIO
+    from Bio import Phylo
+    from modules.phylogeny import tree_to_newick
+    tree = Phylo.read(StringIO("((A:0.1,B:0.2):0.3,C:0.5);"), "newick")
+    text = tree_to_newick(tree)
+    assert sorted(t.name for t in Phylo.read(StringIO(text), "newick").get_terminals()) == ["A", "B", "C"]

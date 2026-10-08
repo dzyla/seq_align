@@ -48,3 +48,14 @@ def test_changing_msa_output_format_does_not_rerun():
     assert not at.exception
     assert at.session_state["msa_aligned"] == aligned
     assert not any("Settings changed" in i.value for i in at.info)
+
+
+def test_tree_built_only_on_button_and_reset_with_dataset():
+    at = load(FASTA_A)
+    at.selectbox(key="analysis_select").select("Phylogenetic Tree").run()
+    assert at.session_state["tree_result"] is None
+    at.button(key="build_tree").click().run()
+    assert not at.exception
+    assert at.session_state["tree_result"] is not None
+    at.text_area(key="fasta_text").input(FASTA_B).run()
+    assert at.session_state["tree_result"] is None

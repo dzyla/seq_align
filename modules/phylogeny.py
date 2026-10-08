@@ -78,18 +78,16 @@ def phylogenetic_tree_section(tree):
 
     # Newick format
     st.subheader("📄 Newick Format")
-    if 'tree_newick' not in st.session_state or not st.session_state.get('tree_newick'):
-        tree_newick_io = StringIO()
-        Phylo.write(tree, tree_newick_io, "newick")
-        st.session_state.tree_newick = tree_newick_io.getvalue()
+    newick = tree_to_newick(tree)
+    st.code(newick)
+    st.download_button(label="📥 Download Newick File", data=newick, file_name="phylogenetic_tree.nwk",
+                       mime="text/plain")
 
-    st.code(st.session_state.tree_newick)
-    st.download_button(
-        label="📥 Download Newick File",
-        data=st.session_state.tree_newick,
-        file_name="phylogenetic_tree.nwk",
-        mime="text/plain"
-    )
+
+def tree_to_newick(tree):
+    out = StringIO()
+    Phylo.write(tree, out, "newick")
+    return out.getvalue()
 
 
 def p_distance(aligned1, aligned2):

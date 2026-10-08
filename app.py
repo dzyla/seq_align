@@ -18,7 +18,7 @@ from modules.pdb_renumber import pdb_renumber_section
 from modules.phylogeny import TREE_METHODS, TreeError, build_phylogenetic_tree, phylogenetic_tree_section
 from modules.seqtools import fingerprint
 from modules.structures import STRUCTURE_FORMATS, StructureFile
-from modules.utils import get_file_extensions, init_session_state, reset_all_results, track_dataset
+from modules.utils import get_file_extensions, init_session_state, reset_all_results, stale_notice, track_dataset
 
 INPUT_FORMATS = ("Text (FASTA)", "FASTA", "Clustal", "GenBank", "Newick", "PDB", "mmCIF")
 
@@ -194,15 +194,24 @@ def main():
     elif alignment_mode == "Phylogenetic Tree":
         c_m, c_c = st.columns(2)
         tree_method = c_m.selectbox("Tree method", list(TREE_METHODS))
-        correction = c_c.checkbox("Correct for multiple substitutions", value=True)
-        with st.spinner("Building phylogenetic tree..."):
-            try:
-                new_tree = build_phylogenetic_tree(sequences, seq_type, TREE_METHODS[tree_method], correction)
-            except TreeError as e:
-                st.error(str(e))
-                new_tree = None
-        if new_tree:
-            phylogenetic_tree_section(new_tree)
+        correction = c_c.checkbox("Correct for multiple substitutions", value=True,
+                                  help="Jukes–Cantor (DNA) or Kimura (protein) distance correction.")
+        params = {"dataset": st.session_state.dataset_fp, "seq_type": seq_type,
+                  "method": tree_method, "correction": correction}
+        if st.button("Build Tree", key="build_tree"):
+            with st.spinner("Building phylogenetic tree..."):
+                try:
+                    tree = build_phylogenetic_tree(sequences, seq_type, TREE_METHODS[tree_method], correction)
+                    st.session_state.tree_result = {"params": params, "tree": tree}
+                except TreeError as e:
+                    st.session_state.tree_result = None
+                    st.error(str(e))
+        stored = st.session_state.get("tree_result")
+        if stored:
+            if stored["params"] != params:
+                stale_notice()
+            else:
+                phylogenetic_tree_section(stored["tree"])
 
 
 if __name__ == "__main__":
