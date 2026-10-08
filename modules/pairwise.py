@@ -167,49 +167,31 @@ def pairwise_alignment_section(sequences, seq_type):
         return
 
     alignment_text = format_result_text(result)
+    stats = compute_alignment_stats(result.aligned_ref, result.aligned_query, result.match_line)
     st.subheader("🧬 Alignment Result")
-    st.code(alignment_text)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Identity", f"{stats['identity_pct']}%", f"{stats['identical']}/{stats['length']}", delta_color="off")
+    c2.metric("Similarity", f"{stats['similarity_pct']}%", f"{stats['similar']}/{stats['length']}", delta_color="off")
+    c3.metric("Gaps", f"{stats['gaps_pct']}%", f"{stats['gaps']}/{stats['length']}", delta_color="off")
+    c4.metric("Score", f"{result.score:.1f}")
+    st.code(format_alignment_blocks(result))
+    for note in result.notes:
+        st.caption(note)
 
     st.subheader("🔍 Point Mutations Relative to Reference")
-    if result.mutations:
-        st.write(f"**Reference Sequence:** `{reference_id}`")
-        st.write(f"**Target Sequence:** `{target_id}`")
-        st.write(f"**Mutations:** {', '.join(result.mutations)}")
-
-        mutation_positions = [int(re.search(r"\d+", mut).group()) for mut in result.mutations]
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=mutation_positions,
-            y=[1] * len(mutation_positions),
-            mode='markers',
-            marker=dict(size=10, color='red'),
-            text=result.mutations,
-            hoverinfo='text'
-        ))
-        fig.update_layout(
-            title="Point Mutations Plot",
-            xaxis_title="Position in Reference Sequence",
-            yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-            height=300,
-            showlegend=False
-        )
-        st.plotly_chart(fig, width="stretch")
-
-        csv_mutations = convert_mutations_to_csv(result.mutations)
-        if csv_mutations:
-            st.download_button(
-                label="📥 Download Mutations (CSV)",
-                data=csv_mutations,
-                file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv",
-                mime="text/csv", on_click="ignore")
-    else:
+    fig = mutation_lollipop(result.mutations, result.ref_length)
+    if fig is None:
         st.write("No point mutations detected.")
+    else:
+        st.write(f"**{len(result.mutations)} substitutions:** {', '.join(result.mutations)}")
+        st.plotly_chart(fig, width="stretch")
+        st.download_button(label="📥 Download Mutations (CSV)", data=convert_mutations_to_csv(result.mutations),
+                           file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv", mime="text/csv",
+                           on_click="ignore")
 
-    st.download_button(
-        label="📥 Download Alignment",
-        data=alignment_text,
-        file_name=f"pairwise_alignment_{reference_id}_vs_{target_id}.txt",
-        mime="text/plain", on_click="ignore")
+    st.download_button(label="📥 Download Alignment", data=alignment_text,
+                       file_name=f"pairwise_alignment_{reference_id}_vs_{target_id}.txt", mime="text/plain",
+                       on_click="ignore")
 
 def get_aligner(seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP, extend_gap_score=DEFAULT_EXTEND_GAP):
     """
@@ -325,17 +307,77 @@ def align_pair(seq1, seq2, seq_type, mode="global", open_gap_score=DEFAULT_OPEN_
     )
 
 
+def compute_alignment_stats(aligned_ref, aligned_query, match_line):
+    """EMBOSS-style statistics: identity and similarity over the full alignment length."""
+    length = len(aligned_ref)
+    identical = match_line.count("|")
+    similar = identical + match_line.count(":")
+    gaps = sum(1 for a, b in zip(aligned_ref, aligned_query) if a == "-" or b == "-")
+
+    def pct(n):
+        return round(100.0 * n / length, 1) if length else 0.0
+
+    return {"length": length, "identical": identical, "similar": similar, "gaps": gaps,
+            "identity_pct": pct(identical), "similarity_pct": pct(similar), "gaps_pct": pct(gaps)}
+
+
+def format_alignment_blocks(result, width=60):
+    """Alignment wrapped in blocks of `width` columns with start/end positions per line."""
+    name_width = max(len(result.ref_id), len(result.query_id))
+
+    def ref_label(pos):
+        if result.ref_rotation and result.ref_length and pos > 0:
+            return ((pos - 1 + result.ref_rotation) % result.ref_length) + 1
+        return pos
+
+    ref_count, query_count = result.ref_start, result.query_start
+    lines = []
+    for i in range(0, len(result.aligned_ref), width):
+        r = result.aligned_ref[i:i + width]
+        q = result.aligned_query[i:i + width]
+        m = result.match_line[i:i + width]
+        r_res = sum(c != "-" for c in r)
+        q_res = sum(c != "-" for c in q)
+        r_start, r_end = ref_count + (1 if r_res else 0), ref_count + r_res
+        q_start, q_end = query_count + (1 if q_res else 0), query_count + q_res
+        lines.append(f"{result.ref_id:<{name_width}} {ref_label(r_start):>6} {r} {ref_label(r_end)}")
+        lines.append(f"{'':<{name_width}} {'':>6} {m}")
+        lines.append(f"{result.query_id:<{name_width}} {q_start:>6} {q} {q_end}")
+        lines.append("")
+        ref_count += r_res
+        query_count += q_res
+    return "\n".join(lines)
+
+
 def format_result_text(result):
-    """Render a PairwiseResult as the plain-text block shown in the UI and downloads."""
-    text = format_alignment_display(
-        result.ref_id, result.aligned_ref, result.match_line,
-        result.query_id, result.aligned_query, result.score,
-        start1=result.ref_start, start2=result.query_start,
-        rotation1=result.ref_rotation, length1=result.ref_length,
+    """Plain-text report: header, statistics, wrapped alignment and notes."""
+    s = compute_alignment_stats(result.aligned_ref, result.aligned_query, result.match_line)
+    header = (
+        "Pairwise Alignment\n"
+        f"Reference: {result.ref_id}\nQuery:     {result.query_id}\n"
+        f"Length: {s['length']}   Identity: {s['identical']}/{s['length']} ({s['identity_pct']}%)   "
+        f"Similarity: {s['similar']}/{s['length']} ({s['similarity_pct']}%)   "
+        f"Gaps: {s['gaps']}/{s['length']} ({s['gaps_pct']}%)   Score: {result.score:.2f}\n\n"
     )
-    if result.notes:
-        text += "\n" + "\n".join(f"Note: {n}" for n in result.notes) + "\n"
-    return text
+    notes = "".join(f"Note: {n}\n" for n in result.notes)
+    return header + format_alignment_blocks(result) + ("\n" + notes if notes else "")
+
+
+def mutation_lollipop(mutations, ref_length):
+    """Stem-and-marker plot of substitutions along the reference; None if there are none."""
+    if not mutations:
+        return None
+    positions = [int(re.search(r"\d+", m).group()) for m in mutations]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=positions, y=[1] * len(positions), width=max(1, ref_length / 400),
+                         marker_color="#bbbbbb", hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=positions, y=[1] * len(positions), mode="markers+text", text=mutations,
+                             textposition="top center", marker=dict(size=10, color="#d62728"),
+                             hovertemplate="%{text}<extra></extra>"))
+    fig.update_layout(title="Substitutions along the reference", xaxis=dict(title="Reference position",
+                      range=[0, ref_length + 1]), yaxis=dict(visible=False, range=[0, 1.6]),
+                      height=260, showlegend=False, margin=dict(t=40, b=40))
+    return fig
 
 
 def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP,
@@ -422,41 +464,6 @@ def are_similar(a, b, substitution_matrix, threshold=1):
         return score >= threshold
     except KeyError:
         return False
-
-
-def location_line(aligned_seq, interval=10, start=0, rotation=0, length=None):
-    """Ruler marking every `interval`-th residue in original sequence coordinates."""
-    location = [' '] * len(aligned_seq)
-    count = start
-    for i, char in enumerate(aligned_seq):
-        if char == '-':
-            continue
-        count += 1
-        pos = ((count - 1 + rotation) % length) + 1 if rotation and length else count
-        if pos % interval == 0:
-            mark = str(pos)
-            start_pos = max(0, i - len(mark) + 1)
-            for j, digit in enumerate(mark):
-                k = start_pos + j
-                if k < len(aligned_seq) and location[k] == ' ':
-                    location[k] = digit
-    return ''.join(location)
-
-
-def format_alignment_display(id1, aligned1, match_line, id2, aligned2, score, interval=10,
-                             start1=0, start2=0, rotation1=0, length1=None):
-    """Formatted alignment block with position rulers in original sequence coordinates."""
-    max_label_length = max(len(id1), len("Match"), len(id2))
-    padding = ' ' * (max_label_length + 2)
-    return (
-        "Pairwise Alignment:\n"
-        f"{padding}{location_line(aligned1, interval, start1, rotation1, length1)}\n"
-        f"{id1.ljust(max_label_length)}: {aligned1}\n"
-        f"{'Match'.ljust(max_label_length)}: {match_line}\n"
-        f"{id2.ljust(max_label_length)}: {aligned2}\n"
-        f"{padding}{location_line(aligned2, interval, start2)}\n"
-        f"{'Score'.ljust(max_label_length)}: {score:.2f}\n"
-    )
 
 
 def report_mutations(aligned1, aligned2, ref_start=0, ref_rotation=0, ref_length=None):

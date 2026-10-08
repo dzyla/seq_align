@@ -49,7 +49,7 @@ def test_calculate_alignment_score_ignores_gaps_in_input():
 
 import pytest
 
-from modules.pairwise import AlignmentError, align_pair, format_result_text, location_line, report_mutations
+from modules.pairwise import AlignmentError, align_pair, format_result_text, report_mutations
 
 CIRC = "GATTACAGGCCTTAAGCTAGCATCGGATCCAGTC"
 
@@ -76,10 +76,6 @@ def test_align_pair_rejects_empty():
         align_pair(rec("a", ""), rec("b", "ATGG"), "DNA")
 
 
-def test_location_line_respects_start_offset():
-    assert location_line("A" * 15, 10, start=20) == "        30     "
-
-
 def test_report_mutations_with_rotation():
     assert report_mutations("CDEAK", "CDEWK", ref_rotation=2, ref_length=5) == ["A1W"]
 
@@ -89,3 +85,36 @@ def test_format_result_text_contains_score_and_notes():
     text = format_result_text(result)
     assert "Score" in text
     assert "circularly shifted" in text
+
+
+from modules.pairwise import compute_alignment_stats, format_alignment_blocks, mutation_lollipop
+
+
+def test_alignment_stats():
+    stats = compute_alignment_stats("MKV-L", "MRVAL", "|:| |")
+    assert stats["length"] == 5
+    assert stats["identical"] == 3
+    assert stats["similar"] == 4
+    assert stats["gaps"] == 1
+    assert stats["identity_pct"] == 60.0
+
+
+def test_blocks_wrap_and_use_reference_coordinates():
+    result = align_pair(rec("ref", REF), rec("q", "RQLEERLGLIEVQAPWLSRVGDG"), "Protein", "local")
+    text = format_alignment_blocks(result, width=10)
+    first = text.splitlines()[0].split()
+    assert first[0] == "ref" and first[1] == "21"
+    assert len([l for l in text.splitlines() if l.startswith("ref")]) == 3
+
+
+def test_blocks_align_with_long_ids():
+    long_id = "a_really_long_sequence_identifier"
+    result = align_pair(rec(long_id, "MKVLAAGIVG"), rec("q", "MKVLAAGIVG"), "Protein")
+    lines = format_alignment_blocks(result).splitlines()
+    assert lines[0].index("MKVLAAGIVG") == lines[2].index("MKVLAAGIVG")
+
+
+def test_lollipop_none_without_mutations():
+    assert mutation_lollipop([], 100) is None
+    fig = mutation_lollipop(["K2R", "V30A"], 100)
+    assert list(fig.data[1].x) == [2, 30]
