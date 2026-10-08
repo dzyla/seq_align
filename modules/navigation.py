@@ -10,5 +10,5 @@ def available_analyses(has_sequences, has_structures, seq_type):
         options.append("Translate DNA" if seq_type == "DNA" else "Antibody Prediction")
         options.append("Convert Formats")
     if has_structures:
-        options.append("PDB Residue Renumbering")
+        options += ["Structure Viewer", "PDB Residue Renumbering"]
     return options

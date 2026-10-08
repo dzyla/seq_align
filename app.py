@@ -18,6 +18,7 @@ from modules.parsers import (
     parse_structure_text,
 )
 from modules.pdb_renumber import pdb_renumber_section
+from modules.structure_view import structure_viewer_section
 from modules.phylogeny import TREE_METHODS, TreeError, build_phylogenetic_tree, phylogenetic_tree_section
 from modules.overview import EXAMPLES, load_example_callback, show_dataset_overview
 from modules.seqtools import detect_seq_type, fingerprint
@@ -246,6 +247,8 @@ Mutation positions are always reported in reference-sequence coordinates.
         dna_translation_section(sequences)
     elif alignment_mode == "Convert Formats":
         format_conversion_section(sequences, input_format, seq_type)
+    elif alignment_mode == "Structure Viewer":
+        structure_viewer_section(structures)
     elif alignment_mode == "PDB Residue Renumbering":
         pdb_renumber_section(structures)
     elif alignment_mode == "Phylogenetic Tree":

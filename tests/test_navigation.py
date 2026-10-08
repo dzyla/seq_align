@@ -19,3 +19,8 @@ def test_structures_add_extraction_and_renumbering():
     assert options[0] == "Extracted Sequences"
     assert options[-1] == "PDB Residue Renumbering"
     assert "Pairwise" in options
+
+
+def test_structures_offer_viewer():
+    assert "Structure Viewer" in available_analyses(True, True, "Protein")
+    assert "Structure Viewer" not in available_analyses(True, False, "Protein")
