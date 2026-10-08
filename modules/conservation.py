@@ -3,7 +3,10 @@ import io
 import math
 from collections import Counter
 
+import logomaker
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from Bio.PDB import PDBIO
 from Bio.PDB.mmcifio import MMCIFIO
 
@@ -67,3 +70,29 @@ def write_bfactors(sf, values, default=0.0):
     writer.save(out)
     text = out.getvalue()
     return text if sf.fmt == "mmCIF" else extract_header_records(sf.text) + text
+
+
+def logo_matrix(aligned, seq_type="Protein", start=1, end=None):
+    """Information content (bits) per residue for alignment columns start..end (1-based, inclusive)."""
+    window = [s[start - 1:end].upper() for s in aligned]
+    ignore = ".-X" if seq_type == "Protein" else ".-N"
+    matrix = logomaker.alignment_to_matrix(window, to_type="information", characters_to_ignore=ignore)
+    matrix.index = matrix.index + start
+    return matrix
+
+
+def logo_figure(matrix, seq_type):
+    fig, ax = plt.subplots(figsize=(max(6, 0.35 * len(matrix)), 3))
+    logomaker.Logo(matrix, ax=ax, color_scheme="classic" if seq_type == "DNA" else "chemistry")
+    ax.set_xlabel("Alignment position")
+    ax.set_ylabel("Bits")
+    fig.tight_layout()
+    return fig
+
+
+def identity_matrix_frame(aligned_pairs):
+    from modules.clustering import msa_identity_matrix  # local: clustering -> msa -> conservation cycle
+
+    ids = [i for i, _ in aligned_pairs]
+    values = msa_identity_matrix([s for _, s in aligned_pairs]) * 100
+    return pd.DataFrame(values.round(1), index=ids, columns=ids)

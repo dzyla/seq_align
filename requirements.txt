@@ -10,3 +10,4 @@ scikit-learn==1.8.0
 pyfamsa==0.3.2
 molviewspec==1.8.1
 requests==2.32.3
+logomaker==0.8.7

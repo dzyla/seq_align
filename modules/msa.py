@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import streamlit as st
 from Bio import AlignIO, SeqIO
 from Bio.Align import MultipleSeqAlignment
@@ -12,7 +13,8 @@ from modules.utils import have_params_changed, stale_notice
 from modules.viz import alignment_to_codes, plot_msa
 from modules.seqtools import clean_sequence, fingerprint
 from modules.conservation import (
-    CONSERVATION_COLORS, column_conservation, conservation_grade, reference_conservation, write_bfactors,
+    CONSERVATION_COLORS, column_conservation, conservation_grade, identity_matrix_frame, logo_figure,
+    logo_matrix, reference_conservation, write_bfactors,
 )
 from modules.structure_view import (
     Highlight, ResidueRef, available_structures, build_view_state, cached_residue_table,
@@ -90,6 +92,8 @@ def msa_section(sequences, seq_type):
                                file_name=f"msa_alignment.{msa_output_format}", mime="text/plain", on_click="ignore")
         except MSAError as e:
             st.error(str(e))
+        st.download_button("📥 Percent identity matrix (CSV)", identity_matrix_frame(aligned).to_csv(),
+                           "percent_identity.csv", "text/csv", on_click="ignore")
 
     with tabs[tab_titles.index("Point Mutations")]:
         st.subheader("🔍 Point Mutations Relative to Reference")
@@ -170,6 +174,14 @@ def msa_section(sequences, seq_type):
                    f"are not scored). Positions are in {ref_seq_id} coordinates.")
         st.line_chart(pd.DataFrame({"Conservation": pd.Series(ref_scores)}), x_label="Reference position",
                       y_label="Conservation")
+        length = len(aligned[0][1])
+        start, end = st.slider("Logo window (alignment columns)", 1, length, (1, min(length, 60)), key="logo_window")
+        if end - start + 1 > 120:
+            st.warning("Showing the first 120 columns of the window.")
+            end = start + 119
+        fig = logo_figure(logo_matrix([s for _, s in aligned], seq_type, start, end), seq_type)
+        st.pyplot(fig)
+        plt.close(fig)
         if seq_type == "Protein":
             ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein").replace("*", "")
             with st.expander("🧊 Conservation on structure (Mol*) and B-factor export"):

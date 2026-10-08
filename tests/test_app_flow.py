@@ -164,3 +164,12 @@ def test_antibody_tabs_render():
     frames = [d.value for d in at.dataframe]
     assert any("V Gene" in f.columns and "IGHV3-23*04" in set(f["V Gene"]) for f in frames)
     assert any("Pair" in f.columns and "example" in set(f["Pair"]) for f in frames)
+
+
+def test_msa_logo_and_identity_export_render():
+    at = load(FASTA_A)
+    at.selectbox(key="analysis_select").select("MSA").run()
+    at.button[0].click().run()
+    assert not at.exception
+    assert at.session_state["logo_window"] == (1, 11)
+    assert any(d.label == "📥 Percent identity matrix (CSV)" for d in at.get("download_button"))

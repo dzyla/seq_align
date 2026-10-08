@@ -57,3 +57,27 @@ def test_write_bfactors_mmcif():
     text = write_bfactors(sf, {("A", 2, ""): 0.5})
     structure = MMCIFParser(QUIET=True).get_structure("x", StringIO(text))
     assert all(a.get_bfactor() == 0.5 for a in structure[0]["A"][2])
+
+
+from modules.conservation import identity_matrix_frame, logo_figure, logo_matrix  # noqa: E402
+
+
+def test_logo_matrix_window_and_argmax():
+    m = logo_matrix(["MKV-", "MKL-", "MRLA"])
+    assert m.shape[0] == 4
+    assert m.idxmax(axis=1).tolist() == ["M", "K", "L", "A"]
+    window = logo_matrix(["MKV-", "MKL-", "MRLA"], start=2, end=3)
+    assert window.index.tolist() == [2, 3]
+
+
+def test_logo_figure_closes_cleanly():
+    import matplotlib.pyplot as plt
+    fig = logo_figure(logo_matrix(["ACGT", "ACGA"], seq_type="DNA"), "DNA")
+    assert fig.axes
+    plt.close(fig)
+
+
+def test_identity_matrix_frame():
+    df = identity_matrix_frame([("a", "MKV"), ("b", "MKL")])
+    assert df.loc["a", "b"] == round(200 / 3, 1)
+    assert df.loc["a", "a"] == 100.0
