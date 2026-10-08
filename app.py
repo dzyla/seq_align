@@ -10,6 +10,7 @@ from modules.clustering import sequence_clustering_section
 from modules.conversion import format_conversion_section
 from modules.fetch import FETCH_SOURCES, FetchError, fetch_any, parse_id_list
 from modules.dna import dna_tools_section, dna_translation_section
+from modules.export import build_session_zip, has_results
 from modules.msa import msa_section
 from modules.navigation import available_analyses
 from modules.pairwise import pairwise_alignment_section
@@ -280,6 +281,13 @@ Mutation positions are always reported in reference-sequence coordinates.
                 stale_notice()
             else:
                 phylogenetic_tree_section(stored["tree"])
+
+    if has_results(st.session_state):
+        st.sidebar.divider()
+        st.sidebar.download_button("📦 Export session (ZIP)",
+                                   data=build_session_zip(st.session_state, sequences, seq_type),
+                                   file_name="seq_align_session.zip", mime="application/zip", on_click="ignore",
+                                   help="All current results, the input sequences and the parameters used.")
 
 
 if __name__ == "__main__":

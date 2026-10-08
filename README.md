@@ -24,6 +24,7 @@ The sequence type (DNA/protein) is detected automatically and can be overridden.
 | Extracted Sequences | FASTA of the chains extracted from uploaded PDB/mmCIF structures |
 | Convert Formats | FASTA, Clustal, PHYLIP (relaxed), Stockholm, NEXUS, EMBL, GenBank |
 | PDB Residue Renumbering | Renumber chains to match target sequences, with insertion codes and per-chain review |
+| Session export | One ZIP with input sequences, every computed result and the parameters used |
 
 Translate DNA is offered for DNA input and Antibody Prediction for protein input; the menu adapts to the detected sequence type.
 
