@@ -147,7 +147,11 @@ def _tree_from_matrix(names, matrix, method):
     constructor = DistanceTreeConstructor()
     dm = DistanceMatrix(names=list(names), matrix=lower)
     tree = constructor.nj(dm) if method == "nj" else constructor.upgma(dm)
-    if method == "nj" and len(names) > 2:
+    if method == "nj":
+        for clade in tree.find_clades():
+            if clade.branch_length is not None and clade.branch_length < 0:
+                clade.branch_length = 0.0
+    if method == "nj" and len(names) > 2 and max(max(row) for row in lower) > 0:
         tree.root_at_midpoint()
     return tree
 

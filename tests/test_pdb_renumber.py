@@ -90,12 +90,12 @@ class TestRenumberingPlan(unittest.TestCase):
         self.assertEqual([r.id[1:] for r in out[0]["A"]], [(1, ' '), (2, ' '), (3, ' ')])
 
     def test_ligands_keep_their_ids(self):
-        residues = [("ATOM", "ALA", 1, " "), ("ATOM", "CYS", 2, " "), ("HETATM", "NAG", 2, " ")]
+        residues = [("ATOM", "ALA", 1, " "), ("ATOM", "CYS", 2, " "), ("HETATM", "NAG", 50, " ")]
         structure = _structure(_pdb(residues))
         mappings, _, _ = prepare_renumbering(structure, [SeqRecord(Seq("MACG"), id="t")])
         out = apply_renumbering(structure, mappings)
         ids = [r.id for r in out[0]["A"]]
-        self.assertIn(("H_NAG", 2, " "), ids)
+        self.assertIn(("H_NAG", 50, " "), ids)
         self.assertIn((" ", 2, " "), ids)
         self.assertIn((" ", 3, " "), ids)
 
@@ -111,6 +111,29 @@ class TestRenumberingPlan(unittest.TestCase):
     def test_extract_header_records(self):
         text = "HEADER    X\nCRYST1   10.000   10.000   10.000  90.00  90.00  90.00 P 1           1\nATOM ...\n"
         self.assertEqual(extract_header_records(text).splitlines()[0][:6], "CRYST1")
+
+class TestRenumberingClashes(unittest.TestCase):
+    def test_water_clashing_with_new_polymer_number_is_moved(self):
+        residues = [("ATOM", "ALA", 1, " "), ("ATOM", "CYS", 2, " "), ("ATOM", "GLY", 3, " "),
+                    ("HETATM", "HOH", 12, " ")]
+        structure = _structure(_pdb(residues))
+        mappings, _, _ = prepare_renumbering(structure, [SeqRecord(Seq("MMMMMMMMMACG"), id="t")])
+        out = apply_renumbering(structure, mappings)
+        keys = [r.id[1:] for r in out[0]["A"]]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual(sorted(r.id[1] for r in out[0]["A"] if r.id[0] == " "), [10, 11, 12])
+        self.assertIn(("W", 13, " "), [r.id for r in out[0]["A"]])
+        self.assertEqual(len(out.xtra["renumber_notes"]), 1)
+        self.assertIn("HOH 12", out.xtra["renumber_notes"][0])
+
+    def test_non_colliding_ligand_keeps_number_and_no_note(self):
+        residues = [("ATOM", "ALA", 1, " "), ("ATOM", "CYS", 2, " "), ("HETATM", "NAG", 50, " ")]
+        structure = _structure(_pdb(residues))
+        mappings, _, _ = prepare_renumbering(structure, [SeqRecord(Seq("MACG"), id="t")])
+        out = apply_renumbering(structure, mappings)
+        self.assertIn(("H_NAG", 50, " "), [r.id for r in out[0]["A"]])
+        self.assertEqual(out.xtra.get("renumber_notes", []), [])
+
 
 if __name__ == '__main__':
     unittest.main()

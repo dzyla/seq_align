@@ -131,7 +131,7 @@ def prepare_renumbering(structure: Structure, target_sequences: list):
 def apply_renumbering(structure: Structure, mappings: dict):
     """Return a renumbered copy; every model uses the mapping computed on the first model."""
     renumbered = copy.deepcopy(structure)
-    for model in renumbered:
+    for model_index, model in enumerate(renumbered):
         for chain in model:
             if chain.id not in mappings:
                 continue
@@ -145,7 +145,31 @@ def apply_renumbering(structure: Structure, mappings: dict):
                 res.id = (res.id[0], -100000 - k, " ")
             for res, (number, icode) in zip(residues, new_ids):
                 res.id = (res.id[0], number, icode)
+            _move_clashing_nonpolymer(renumbered, chain, residues, record_notes=(model_index == 0))
     return renumbered
+
+
+def _move_clashing_nonpolymer(structure, chain, polymer, record_notes):
+    """Move waters/ligands whose (number, icode) equals a renumbered polymer residue's.
+
+    Moved residues get numbers above the chain maximum (insertion code " "), keeping hetflag.
+    """
+    polymer_ids = {id(res) for res in polymer}
+    taken = {res.id[1:] for res in polymer}
+    clashing = [res for res in chain if id(res) not in polymer_ids and res.id[1:] in taken]
+    if not clashing:
+        return
+    next_number = max(res.id[1] for res in chain) + 1
+    moves = []
+    for k, res in enumerate(clashing):
+        moves.append((res, res.id[1], res.id[0], next_number + k))
+        res.id = (res.id[0], -200000 - k, " ")
+    for res, old_number, hetflag, new_number in moves:
+        res.id = (hetflag, new_number, " ")
+        if record_notes:
+            structure.xtra.setdefault("renumber_notes", []).append(
+                f"Chain {chain.id}: {res.resname.strip()} {old_number} renumbered to {new_number} "
+                f"to avoid clashing with polymer residue {old_number}")
 
 
 def extract_header_records(pdb_text):
@@ -228,6 +252,8 @@ def pdb_renumber_section(pdb_file, pdb_format):
             content = extract_header_records(raw_text) + content
         ext = ".cif" if pdb_format == "mmCIF" else ".pdb"
         st.success("Renumbering completed successfully!")
+        for note in renumbered.xtra.get("renumber_notes", []):
+            st.info(note)
         st.download_button(
             label=f"📥 Download Renumbered {pdb_format}",
             data=content,

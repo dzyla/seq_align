@@ -48,3 +48,9 @@ def test_tree_from_alignment_upgma():
     aln = MultipleSeqAlignment([rec("a", "ACGT-A"), rec("b", "ACGTTA"), rec("c", "TCGTTA")])
     tree = build_tree_from_alignment(aln, "DNA", method="upgma")
     assert sorted(t.name for t in tree.get_terminals()) == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize("method", ["nj", "upgma"])
+def test_identical_sequences_give_tree_with_all_leaves(method):
+    tree = build_phylogenetic_tree([rec("a", "MKV"), rec("b", "MKV"), rec("c", "MKV")], "Protein", method=method)
+    assert sorted(t.name for t in tree.get_terminals()) == ["a", "b", "c"]

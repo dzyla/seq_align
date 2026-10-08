@@ -230,7 +230,7 @@ def sequence_clustering_section(sequences, seq_type):
                 fig_pca.update_layout(width=700, height=700)
                 st.plotly_chart(fig_pca, width="content")
             else:
-                st.info("Need at least 3 sequences for PCA.")
+                st.info("Need at least 3 sequences for PCoA.")
 
             st.markdown("### Cluster Details")
             st.write(f"Found {len(clusters)} clusters.")
