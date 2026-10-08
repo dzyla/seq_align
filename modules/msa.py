@@ -1,3 +1,8 @@
+import os
+import shutil
+import subprocess
+import tempfile
+
 import matplotlib.pyplot as plt
 import streamlit as st
 from Bio import AlignIO, SeqIO
@@ -48,14 +53,20 @@ def msa_section(sequences, seq_type):
             "Consensus Threshold", 0.5, 1.0, 0.7, 0.05,
             help="Minimum fraction of sequences that must share a residue for it to enter the consensus")
 
-    current_params = {"fingerprint": fingerprint(sequences), "seq_type": seq_type}
+    method_options = [m for m in MSA_METHODS if m == "FAMSA" or mafft_available()]
+    msa_method = st.selectbox("Aligner", method_options, key="msa_method",
+                              index=method_options.index("MAFFT") if seq_type == "DNA" and "MAFFT" in method_options else 0,
+                              help="FAMSA is fast for large protein sets. MAFFT (--auto) is recommended for DNA."
+                                   + ("" if mafft_available() else " MAFFT is not installed on this server."))
+
+    current_params = {"fingerprint": fingerprint(sequences), "seq_type": seq_type, "method": msa_method}
     params_changed = have_params_changed(current_params, "last_msa_params")
 
     if st.button("Run MSA"):
         with st.spinner("Performing MSA - this may take a moment for large datasets..."):
             try:
                 st.session_state.msa_aligned = cached_run_msa(
-                    tuple((s.id, str(s.seq)) for s in sequences), seq_type)
+                    tuple((s.id, str(s.seq)) for s in sequences), seq_type, msa_method)
             except MSAError as e:
                 st.session_state.msa_aligned = None
                 st.error(str(e))
@@ -72,8 +83,19 @@ def msa_section(sequences, seq_type):
         stale_notice()
         return
 
+    with st.expander("✂️ Alignment tools (trim columns / remove redundant sequences)"):
+        max_gap = st.slider("Drop columns with gap fraction above", 0.0, 1.0, 1.0, 0.05, key="msa_trim",
+                            help="1.0 keeps all columns. Trimming affects the heatmap, downloads and trees only; "
+                                 "mutation, variant and conservation positions always use the full alignment.")
+        max_id = st.slider("Drop sequences with identity at or above", 0.5, 1.0, 1.0, 0.01, key="msa_redundancy",
+                           help="1.0 keeps all sequences. The reference sequence is always kept.")
+    rows, view, removed = alignment_views(aligned, ref_seq_id, max_gap, max_id)
+    if removed:
+        st.caption(f"{len(removed)} redundant sequence(s) hidden: "
+                   + ", ".join(f"{r} (≈ {k})" for r, k in list(removed.items())[:20]))
+
     try:
-        mutations = cached_mutations(tuple(aligned), ref_seq_id)
+        mutations = cached_mutations(tuple(rows), ref_seq_id)
     except MSAError as e:
         st.error(str(e))
         mutations = {}
@@ -85,14 +107,14 @@ def msa_section(sequences, seq_type):
 
     with tabs[0]:
         st.subheader("📄 MSA Result")
-        st.write(f"Total sequences: {len(aligned)}. MSA length: {len(aligned[0][1])}")
-        plot_msa(alignment_to_codes([s for _, s in aligned]), [i for i, _ in aligned], plot_method, seq_type)
+        st.write(f"Total sequences: {len(view)}. MSA length: {len(view[0][1])}")
+        plot_msa(alignment_to_codes([s for _, s in view]), [i for i, _ in view], plot_method, seq_type)
         try:
-            st.download_button(label="📥 Download MSA", data=serialize_alignment(aligned, msa_output_format),
+            st.download_button(label="📥 Download MSA", data=serialize_alignment(view, msa_output_format),
                                file_name=f"msa_alignment.{msa_output_format}", mime="text/plain", on_click="ignore")
         except MSAError as e:
             st.error(str(e))
-        st.download_button("📥 Percent identity matrix (CSV)", identity_matrix_frame(aligned).to_csv(),
+        st.download_button("📥 Percent identity matrix (CSV)", identity_matrix_frame(view).to_csv(),
                            "percent_identity.csv", "text/csv", on_click="ignore")
 
     with tabs[tab_titles.index("Point Mutations")]:
@@ -125,7 +147,7 @@ def msa_section(sequences, seq_type):
 
     with tabs[tab_titles.index("Variant Table")]:
         st.subheader("🧾 Variant Table (substitutions and indels)")
-        matrix = variant_matrix(aligned, ref_seq_id)
+        matrix = variant_matrix(rows, ref_seq_id)
         if matrix.empty or matrix.shape[1] == 0:
             st.write("No variants relative to the reference.")
         else:
@@ -134,7 +156,7 @@ def msa_section(sequences, seq_type):
             st.dataframe(matrix, width="stretch")
             st.download_button("📥 Variant matrix (CSV)", matrix.to_csv(), "variant_matrix.csv", "text/csv",
                                on_click="ignore")
-            st.download_button("📥 Variants, one per row (CSV)", variants_long(aligned, ref_seq_id).to_csv(index=False),
+            st.download_button("📥 Variants, one per row (CSV)", variants_long(rows, ref_seq_id).to_csv(index=False),
                                "variants_long.csv", "text/csv", on_click="ignore")
 
     if calculate_representative:
@@ -142,7 +164,7 @@ def msa_section(sequences, seq_type):
             st.subheader("🧬 Representative Sequence Analysis")
             data = st.session_state.consensus_data
             if data is None or data['threshold'] != consensus_threshold:
-                alignment = aligned_to_msa(aligned)
+                alignment = aligned_to_msa(rows)
                 consensus_record, closest_record, min_diff, closest_seq_id = calculate_representative_sequence(
                     alignment, threshold=consensus_threshold, seq_type=seq_type)
                 data = st.session_state.consensus_data = {
@@ -169,12 +191,12 @@ def msa_section(sequences, seq_type):
 
     with tabs[tab_titles.index("Conservation")]:
         st.subheader("🎯 Conservation")
-        ref_scores = reference_conservation(aligned, ref_seq_id, seq_type)
+        ref_scores = reference_conservation(rows, ref_seq_id, seq_type)
         st.caption(f"1 − normalized Shannon entropy per column (gaps excluded; columns with > 50% gaps "
                    f"are not scored). Positions are in {ref_seq_id} coordinates.")
         st.line_chart(pd.DataFrame({"Conservation": pd.Series(ref_scores)}), x_label="Reference position",
                       y_label="Conservation")
-        length = len(aligned[0][1])
+        length = len(view[0][1])
         if length < 2:
             st.caption("Logo needs at least 2 columns.")
         else:
@@ -183,7 +205,7 @@ def msa_section(sequences, seq_type):
             if end - start + 1 > 120:
                 st.warning("Showing the first 120 columns of the window.")
                 end = start + 119
-            fig = logo_figure(logo_matrix([s for _, s in aligned], seq_type, start, end), seq_type)
+            fig = logo_figure(logo_matrix([s for _, s in view], seq_type, start, end), seq_type)
             st.pyplot(fig)
             plt.close(fig)
         if seq_type == "Protein":
@@ -232,7 +254,7 @@ def msa_section(sequences, seq_type):
             with st.spinner("Building tree from MSA..."):
                 try:
                     tree = build_tree_from_alignment(
-                        aligned_to_msa(aligned), seq_type, TREE_METHODS[tree_method], correction)
+                        aligned_to_msa(view), seq_type, TREE_METHODS[tree_method], correction)
                     st.session_state.msa_tree = {
                         "params": {"method": tree_method, "correction": correction}, "tree": tree}
                 except TreeError as e:
@@ -252,20 +274,91 @@ class MSAError(RuntimeError):
 MSA_OUTPUT_FORMATS = ("fasta", "clustal", "phylip-relaxed", "stockholm")
 
 
-def run_msa(pairs, seq_type):
-    """Align (id, sequence) pairs with FAMSA and return [(id, aligned_sequence)]."""
+MSA_METHODS = ("FAMSA", "MAFFT")
+
+
+def mafft_available():
+    return shutil.which("mafft") is not None
+
+
+def run_mafft(pairs, seq_type):
+    """Align with MAFFT --auto; input order, IDs and residue case are preserved."""
+    if not mafft_available():
+        raise MSAError("MAFFT is not installed on this server; use FAMSA.")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "input.fasta")
+        with open(path, "w") as handle:
+            handle.write("".join(f">{seq_id}\n{seq}\n" for seq_id, seq in pairs))
+        try:
+            proc = subprocess.run(
+                ["mafft", "--auto", "--quiet", "--preservecase", "--inputorder", "--anysymbol", path],
+                capture_output=True, text=True, timeout=600, check=True)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            raise MSAError(f"MAFFT failed: {e}") from e
+    aligned = [(r.id, str(r.seq)) for r in SeqIO.parse(StringIO(proc.stdout), "fasta")]
+    if [i for i, _ in aligned] != [i for i, _ in pairs]:
+        raise MSAError("MAFFT output did not match the input sequences.")
+    return aligned
+
+
+def run_msa(pairs, seq_type, method="FAMSA"):
+    """Align (id, sequence) pairs with FAMSA (default) or MAFFT and return [(id, aligned_sequence)]."""
     cleaned = [(seq_id, clean_sequence(seq, seq_type).replace("*", "")) for seq_id, seq in pairs]
     empty = [seq_id for seq_id, seq in cleaned if not seq]
     if empty:
         raise MSAError(f"Sequences empty after cleaning: {', '.join(empty)}")
     if len(cleaned) < 2:
         raise MSAError("At least two sequences are required for an MSA.")
+    short = [seq_id for seq_id, seq in cleaned if len(seq) < 2]
+    if short:  # pyFAMSA crashes the whole process on single-residue input
+        raise MSAError(f"Sequences too short to align (need at least 2 residues): {', '.join(short)}")
+    if method == "MAFFT":
+        return run_mafft(cleaned, seq_type)
     famsa_input = [PyFAMSASequence(seq_id.encode(), seq.encode()) for seq_id, seq in cleaned]
     try:
         msa = PyFAMSAAligner(guide_tree="upgma").align(famsa_input)
     except Exception as e:
         raise MSAError(f"FAMSA failed: {e}") from e
     return [(s.id.decode(), s.sequence.decode()) for s in msa]
+
+
+def trim_columns(aligned_pairs, max_gap_fraction):
+    """Drop columns whose gap fraction exceeds max_gap_fraction; returns (pairs, kept column indices)."""
+    seqs = [s for _, s in aligned_pairs]
+    n = len(seqs)
+    kept = [c for c in range(len(seqs[0])) if sum(s[c] in "-." for s in seqs) / n <= max_gap_fraction]
+    return [(i, "".join(s[c] for c in kept)) for i, s in aligned_pairs], kept
+
+
+def remove_redundant(aligned_pairs, identity_threshold, keep_ids=()):
+    """Greedy filter: keep `keep_ids` first, then longest sequences; drop any sequence whose identity
+    to an already kept sequence is >= threshold. Returns (kept pairs, {removed_id: representative_id})."""
+    from modules.clustering import msa_identity_matrix  # local: clustering imports msa
+
+    ids = [i for i, _ in aligned_pairs]
+    identity = msa_identity_matrix([s for _, s in aligned_pairs])
+    ungapped = {i: len(s.replace("-", "")) for i, s in aligned_pairs}
+    order = [i for i in keep_ids if i in ids] + sorted((i for i in ids if i not in keep_ids),
+                                                       key=lambda i: -ungapped[i])
+    index = {i: k for k, i in enumerate(ids)}
+    kept, removed = [], {}
+    for seq_id in order:
+        rep = next((k for k in kept if identity[index[seq_id], index[k]] >= identity_threshold), None)
+        if rep is None:
+            kept.append(seq_id)
+        else:
+            removed[seq_id] = rep
+    pairs_by_id = dict(aligned_pairs)
+    return [(k, pairs_by_id[k]) for k in kept], removed
+
+
+def alignment_views(aligned_pairs, reference_id, max_gap_fraction=1.0, max_identity=1.0):
+    """(rows for coordinate-bearing analyses, trimmed view for display/export, removed map)."""
+    rows, removed = aligned_pairs, {}
+    if max_identity < 1.0:
+        rows, removed = remove_redundant(aligned_pairs, max_identity, keep_ids=(reference_id,))
+    view = trim_columns(rows, max_gap_fraction)[0] if max_gap_fraction < 1.0 else rows
+    return rows, view, removed
 
 
 def serialize_alignment(aligned_pairs, output_format):
@@ -312,9 +405,9 @@ def perform_msa(sequences, reference_id, seq_type, output_format):
 
 
 @st.cache_data(max_entries=8, show_spinner=False)
-def cached_run_msa(pairs, seq_type):
-    """FAMSA alignment memoized on the exact (id, sequence) tuples and sequence type."""
-    return run_msa(list(pairs), seq_type)
+def cached_run_msa(pairs, seq_type, method="FAMSA"):
+    """Alignment memoized on the exact (id, sequence) tuples, sequence type and method."""
+    return run_msa(list(pairs), seq_type, method)
 
 
 @st.cache_data(max_entries=16, show_spinner=False)

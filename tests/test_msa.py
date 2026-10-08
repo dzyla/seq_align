@@ -49,3 +49,54 @@ def test_aligned_to_msa():
 
 def test_coverage_vectorized():
     assert calculate_sequence_coverage(["MK-V", "M--V", "MKLV"]).tolist() == [3, 2, 1, 3]
+
+
+import shutil
+
+from modules.msa import alignment_views, remove_redundant, trim_columns
+
+
+def test_trim_columns():
+    trimmed, kept = trim_columns([("a", "M-KV"), ("b", "M-KL"), ("c", "MAK-")], 0.5)
+    assert kept == [0, 2, 3]
+    assert dict(trimmed)["a"] == "MKV"
+
+
+def test_remove_redundant_keeps_reference():
+    pairs = [("b", "MKVLA"), ("a", "MKVLA"), ("c", "WWWWW")]
+    kept, removed = remove_redundant(pairs, 0.95, keep_ids=("a",))
+    assert [i for i, _ in kept] == ["a", "c"]
+    assert removed == {"b": "a"}
+
+
+def test_alignment_views_keep_coordinates():
+    pairs = [("ref", "M-KV"), ("x", "MAKV"), ("y", "MAKV")]
+    rows, view, removed = alignment_views(pairs, "ref", max_gap_fraction=0.3, max_identity=0.99)
+    assert dict(rows)["ref"] == "M-KV"
+    assert [i for i, _ in rows] == ["ref", "x"]
+    assert dict(view)["ref"] == "MKV"
+    assert removed == {"y": "x"}
+
+
+def test_mafft_missing_raises(monkeypatch):
+    import modules.msa as msa
+    monkeypatch.setattr(msa.shutil, "which", lambda name: None)
+    with pytest.raises(MSAError, match="MAFFT"):
+        run_msa([("a", "MKV"), ("b", "MKL")], "Protein", method="MAFFT")
+
+
+@pytest.mark.skipif(shutil.which("mafft") is None, reason="MAFFT not installed")
+def test_mafft_alignment_preserves_ids_and_residues():
+    aligned = run_msa([("a", "mkvlaagivg"), ("b", "MKVLAGIVG")], "Protein", method="MAFFT")
+    assert [i for i, _ in aligned] == ["a", "b"]
+    assert aligned[0][1].replace("-", "") == "MKVLAAGIVG"
+
+
+def test_single_residue_sequence_rejected_before_aligning(monkeypatch):
+    import modules.msa as msa
+
+    def boom(*a, **k):
+        raise AssertionError("must not reach FAMSA")
+    monkeypatch.setattr(msa, "PyFAMSAAligner", boom)
+    with pytest.raises(MSAError, match="too short.*a"):
+        run_msa([("a", "M"), ("b", "MKV")], "Protein")

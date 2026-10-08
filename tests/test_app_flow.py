@@ -178,7 +178,7 @@ def test_msa_logo_and_identity_export_render():
 def test_msa_logo_guard_for_single_column(monkeypatch):
     # pyFAMSA segfaults on single-residue input, so stub the aligner to produce a 1-column MSA
     import modules.msa as msa_module
-    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type: [("a", "M"), ("b", "K")])
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": [("a", "M"), ("b", "K")])
     at = load(">a\nM\n>b\nK\n")
     at.selectbox(key="analysis_select").select("MSA").run()
     at.button[0].click().run()

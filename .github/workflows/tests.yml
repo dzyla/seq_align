@@ -12,7 +12,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install HMMER (needed by ANARCI)
-        run: sudo apt-get update && sudo apt-get install -y hmmer
+        run: sudo apt-get update && sudo apt-get install -y hmmer mafft
       - name: Install Python dependencies
         run: pip install -r requirements-dev.txt
       - name: Run tests
