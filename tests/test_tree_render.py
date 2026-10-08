@@ -174,3 +174,10 @@ def test_night_explore_view_swaps_black_ink():
     drawing, _ = draw(6, "rectangular")
     colours = {tr.line.color for tr in render_plotly(drawing, dark=True).data if tr.mode == "lines"}
     assert "#1a1a1a" not in colours and "#ece8df" in colours
+
+
+def test_support_numbers_are_editable_svg_text():
+    t = Phylo.read(StringIO("((A:0.1,B:0.2)90:0.3,(C:0.2,D:0.1)70:0.2);"), "newick")
+    geo = compute_geometry(prepare_tree(t, "as_built"), "rectangular")
+    svg = export_bytes(render_matplotlib(place(geo, TreeStyle(style="classic", support_min=50))), "svg")
+    assert b">90<" in svg and b">70<" in svg

@@ -80,3 +80,30 @@ def test_assign_clades_one_group_means_no_colouring():
 def test_unknown_layout_rejected():
     with pytest.raises(ValueError):
         compute_geometry(prepare_tree(tree()), "radial")
+
+
+def caterpillar(n_leaves):
+    """Ladder-like tree built iteratively (depth n_leaves - 1)."""
+    from Bio.Phylo.BaseTree import Clade, Tree
+    node = Clade(branch_length=0.1, name="A0")
+    for i in range(1, n_leaves):
+        node = Clade(branch_length=0.1, clades=[node, Clade(branch_length=0.1, name=f"A{i}")])
+    node.branch_length = 0.0
+    return Tree(root=node, rooted=True)
+
+
+@pytest.mark.parametrize("layout", ["rectangular", "circular"])
+def test_deep_caterpillar_tree_lays_out_and_restores_recursion_limit(layout):
+    import sys
+    before = sys.getrecursionlimit()
+    t = prepare_tree(caterpillar(400), "midpoint")
+    geo = compute_geometry(t, layout)
+    assert len(geo.leaves) == 400
+    assert sys.getrecursionlimit() == before
+
+
+def test_assign_clades_never_exceeds_k_with_trifurcating_root():
+    t = prepare_tree(Phylo.read(StringIO("(A:0.1,B:0.2,C:0.3);"), "newick"), "as_built")
+    two = assign_clades(t, 2)
+    assert len(set(two.values())) <= 2
+    assert len(set(assign_clades(t, 3).values())) == 3

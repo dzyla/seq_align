@@ -1,6 +1,7 @@
 """Publication tree figures: place a TreeGeometry in inches (measured labels, no overlaps), then draw it
 with matplotlib (exported figure) or plotly (interactive view). Uses matplotlib.figure.Figure directly,
 never pyplot, so no global figure registry or GUI backend is involved."""
+import html
 import math
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -8,10 +9,10 @@ from io import BytesIO
 import matplotlib
 import numpy as np
 import plotly.graph_objects as go
-from matplotlib import font_manager, patheffects
+from matplotlib import font_manager
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from matplotlib.patches import Polygon, Rectangle
+from matplotlib.patches import Polygon
 
 STYLES = {"Classic ink": "classic", "Support dots": "dots", "Clade colour": "clades"}
 PALETTE = ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#000000", "#B8860B")
@@ -434,14 +435,16 @@ def _place_unrooted(geo, style, names, measure, show_labels):
     label_h = max((h for _, h in sizes), default=0.0)
     ring = len(names) * label_h * 1.3 / (2 * math.pi) if show_labels else 0.0  # perimeter fits the labels
     scale = max((style.width_cm / 2.54 - 2 * label_w - 0.3) / extent, 1.5 / extent, 2 * ring / extent)
-    obstacles = []
-    for x0, y0, x1, y1, _ in geo.edges:  # branch points every ~0.03 in, except the last 0.06 in at each tip
-        length = math.hypot(x1 - x0, y1 - y0) * scale
-        for t in np.linspace(0, 1, max(2, int(length / 0.03))):
-            if (1 - t) * length > 0.06:
-                obstacles.append(((x0 + t * (x1 - x0)) * scale, (y0 + t * (y1 - y0)) * scale))
-    tips = [(leaf.a * scale, leaf.b * scale) for leaf in geo.leaves]
-    boxes, ends = _place_outward(tips, sizes, geo.leaf_angles, obstacles) if show_labels else ([], [])
+    boxes, ends = [], []
+    if show_labels:
+        obstacles = []
+        for x0, y0, x1, y1, _ in geo.edges:  # branch points every ~0.03 in, except the last 0.06 in at each tip
+            length = math.hypot(x1 - x0, y1 - y0) * scale
+            for t in np.linspace(0, 1, max(2, int(length / 0.03))):
+                if (1 - t) * length > 0.06:
+                    obstacles.append(((x0 + t * (x1 - x0)) * scale, (y0 + t * (y1 - y0)) * scale))
+        tips = [(leaf.a * scale, leaf.b * scale) for leaf in geo.leaves]
+        boxes, ends = _place_outward(tips, sizes, geo.leaf_angles, obstacles)
     margin = 0.15
     legend_h = 0.45
     all_x = [x * scale for x in xs] + [b[0] for b in boxes] + [b[2] for b in boxes]
@@ -477,7 +480,7 @@ def _place_unrooted(geo, style, names, measure, show_labels):
     return d
 
 
-def render_matplotlib(drawing, italic=True):
+def render_matplotlib(drawing):
     """The publication figure (white background), as a matplotlib Figure without pyplot."""
     fig = Figure(figsize=(drawing.width, drawing.height), dpi=100, facecolor="white")
     FigureCanvasAgg(fig)
@@ -493,11 +496,11 @@ def render_matplotlib(drawing, italic=True):
                 solid_capstyle="round", solid_joinstyle="round", zorder=1)
     for x, y, face, edge, size, _ in drawing.dots:
         ax.scatter([x], [y], s=size ** 2, facecolor=face, edgecolor=edge, linewidth=0.8, zorder=3)
-    halo = [patheffects.withStroke(linewidth=2.2, foreground="white")]
-    for t in drawing.texts:
+    for t in drawing.texts:  # halo as a white box: path effects would export support numbers as outlines
         ax.text(t.x, t.y, t.text, fontsize=t.size, color=t.color, ha=t.ha, va=t.va, rotation=t.rotation,
                 rotation_mode="anchor", family=drawing.family, style="italic" if t.italic else "normal",
-                path_effects=halo if t.halo else None, gid=t.kind, zorder=4)
+                bbox=dict(boxstyle="round,pad=0.08", facecolor="white", edgecolor="none") if t.halo else None,
+                gid=t.kind, zorder=4)
     return fig
 
 
@@ -554,7 +557,8 @@ def render_plotly(drawing, dark=False):
     for t in drawing.texts:
         cx, cy = _text_center(t) if t.width else (t.x, t.y)
         annotations.append(dict(
-            x=cx, y=cy, text=f"<i>{t.text}</i>" if t.italic else t.text, showarrow=False, textangle=-t.rotation,
+            x=cx, y=cy, text=f"<i>{html.escape(t.text)}</i>" if t.italic else html.escape(t.text), showarrow=False,
+            textangle=-t.rotation,
             xanchor="center" if t.width else t.ha, yanchor="middle" if t.width else
             {"center": "middle", "bottom": "bottom", "top": "top"}[t.va],
             font=dict(size=t.size * px_per_in / 72, color=recolor(t.color), family=drawing.family)))

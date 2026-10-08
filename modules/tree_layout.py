@@ -1,9 +1,31 @@
 """Tree geometry for publication figures: rooting, clade groups and layout coordinates. No plotting here."""
 import copy
 import math
+import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 LAYOUTS = ("rectangular", "circular", "unrooted")
+
+
+def _count_clades(tree):
+    stack, n = [tree.root], 0
+    while stack:
+        clade = stack.pop()
+        n += 1
+        stack.extend(clade.clades)
+    return n
+
+
+@contextmanager
+def recursion_headroom(tree):
+    """Temporarily raise the recursion limit for deep (ladder-like) trees; restored afterwards."""
+    old = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(old, 20 * _count_clades(tree) + 1000))
+    try:
+        yield
+    finally:
+        sys.setrecursionlimit(old)
 
 
 @dataclass
@@ -41,24 +63,28 @@ def prepare_tree(tree, rooting="midpoint", outgroup=(), ladderize=True):
     """Deep copy of `tree`, rooted (midpoint, outgroup or as built) and optionally ladderized."""
     from modules.phylogeny import TreeError  # local: phylogeny imports the renderer, which imports this module
 
-    tree = copy.deepcopy(tree)
-    names = [t.name for t in tree.get_terminals()]
-    if rooting == "outgroup":
-        outgroup = list(outgroup)
-        unknown = [o for o in outgroup if o not in names]
-        if not outgroup or unknown or len(outgroup) >= len(names):
-            raise TreeError("The outgroup must be one or more (but not all) leaves of the tree"
-                            + (f"; unknown: {', '.join(unknown)}" if unknown else "") + ".")
+    with recursion_headroom(tree):
         try:
-            tree.root_with_outgroup(*outgroup)
-        except ValueError as e:
-            raise TreeError(f"Cannot root on this outgroup: {e}") from e
-    elif rooting == "midpoint":
-        if len(names) > 2 and max(tree.distance(t) for t in tree.get_terminals()) > 0:
-            tree.root_at_midpoint()
-    if ladderize:
-        tree.ladderize()
-    return tree
+            tree = copy.deepcopy(tree)
+            names = [t.name for t in tree.get_terminals()]
+            if rooting == "outgroup":
+                outgroup = list(outgroup)
+                unknown = [o for o in outgroup if o not in names]
+                if not outgroup or unknown or len(outgroup) >= len(names):
+                    raise TreeError("The outgroup must be one or more (but not all) leaves of the tree"
+                                    + (f"; unknown: {', '.join(unknown)}" if unknown else "") + ".")
+                try:
+                    tree.root_with_outgroup(*outgroup)
+                except ValueError as e:
+                    raise TreeError(f"Cannot root on this outgroup: {e}") from e
+            elif rooting == "midpoint":
+                if len(names) > 2 and max(tree.distance(t) for t in tree.get_terminals()) > 0:
+                    tree.root_at_midpoint()
+            if ladderize:
+                tree.ladderize()
+            return tree
+        except RecursionError as e:
+            raise TreeError("Tree is too deep to draw.") from e
 
 
 def _height(clade, has_lengths):
@@ -69,17 +95,18 @@ def _height(clade, has_lengths):
 
 
 def assign_clades(tree, k):
-    """Split the tree into k groups by repeatedly splitting the group whose root is highest.
+    """Split the tree into at most k groups by repeatedly splitting the tallest group whose split keeps the
+    count within k (a polytomy root may not fit, so fewer groups can result).
     Returns {clade: group index} for every clade inside a group (none above them), numbered top to bottom."""
     if k <= 1:
         return {}
     has_lengths = any(c.branch_length for c in tree.find_clades())
     groups = [tree.root]
     while len(groups) < k:
-        splittable = [g for g in groups if not g.is_terminal()]
-        if not splittable:
+        fitting = [g for g in groups if not g.is_terminal() and len(groups) - 1 + len(g.clades) <= k]
+        if not fitting:
             break
-        top = max(splittable, key=lambda g: _height(g, has_lengths))
+        top = max(fitting, key=lambda g: _height(g, has_lengths))
         i = groups.index(top)
         groups[i:i + 1] = list(top.clades)
     order = {t: n for n, t in enumerate(tree.get_terminals())}
@@ -129,6 +156,11 @@ def _node(clade, a, b, clades):
 
 def compute_geometry(tree, layout="rectangular", cladogram=False, clades=None):
     """Geometry of an already prepared tree (see prepare_tree); `clades` is an assign_clades mapping."""
+    with recursion_headroom(tree):
+        return _compute_geometry(tree, layout, cladogram, clades)
+
+
+def _compute_geometry(tree, layout, cladogram, clades):
     if layout not in LAYOUTS:
         raise ValueError(f"Unknown layout {layout!r}")
     clades = clades or {}
