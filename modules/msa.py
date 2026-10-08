@@ -11,7 +11,13 @@ from typing import List, Dict, Tuple
 from modules.utils import have_params_changed, stale_notice
 from modules.viz import alignment_to_codes, plot_msa
 from modules.seqtools import clean_sequence, fingerprint
-from modules.structure_view import structure_highlight_panel
+from modules.conservation import (
+    CONSERVATION_COLORS, column_conservation, conservation_grade, reference_conservation, write_bfactors,
+)
+from modules.structure_view import (
+    Highlight, ResidueRef, available_structures, build_view_state, cached_residue_table,
+    map_sequence_to_structure, rank_chains, render_molstar, structure_highlight_panel,
+)
 from modules.phylogeny import TREE_METHODS, TreeError, build_tree_from_alignment, phylogenetic_tree_section
 
 def msa_section(sequences, seq_type):
@@ -69,7 +75,7 @@ def msa_section(sequences, seq_type):
         st.error(str(e))
         mutations = {}
 
-    tab_titles = ["Alignment & Heatmap", "Point Mutations", "Phylogenetic Tree"]
+    tab_titles = ["Alignment & Heatmap", "Point Mutations", "Conservation", "Phylogenetic Tree"]
     if calculate_representative:
         tab_titles.insert(2, "Representative Sequence")
     tabs = st.tabs(tab_titles)
@@ -141,6 +147,45 @@ def msa_section(sequences, seq_type):
                 data=(f">{data['consensus_record'].id}\n{data['consensus_record'].seq}\n"
                       f">{data['closest_record'].id}\n{data['closest_record'].seq}\n"),
                 file_name="consensus_representative.fasta", mime="text/plain", on_click="ignore")
+
+    with tabs[tab_titles.index("Conservation")]:
+        st.subheader("🎯 Conservation")
+        ref_scores = reference_conservation(aligned, ref_seq_id, seq_type)
+        st.caption(f"1 − normalized Shannon entropy per column (gaps excluded; columns with > 50% gaps "
+                   f"are not scored). Positions are in {ref_seq_id} coordinates.")
+        st.line_chart(pd.DataFrame({"Conservation": pd.Series(ref_scores)}), x_label="Reference position",
+                      y_label="Conservation")
+        if seq_type == "Protein":
+            ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein")
+            with st.expander("🧊 Conservation on structure (Mol*) and B-factor export"):
+                structures = available_structures()
+                if not structures:
+                    st.caption("Use 'Show on structure' in the Point Mutations tab to add a structure, "
+                               "or load one via Fetch by ID.")
+                else:
+                    name = st.selectbox("Structure", list(structures), key="cons_structure")
+                    sf = structures[name]
+                    table = cached_residue_table(sf.data, sf.fmt, sf.name)
+                    ranked = rank_chains(ref_seq, table)
+                    chain_id = st.selectbox("Chain", [c for c, _ in ranked], key="cons_chain")
+                    pos_map, identity = map_sequence_to_structure(ref_seq, table[chain_id])
+                    highlights, values = [], {}
+                    for pos, score in ref_scores.items():
+                        res = pos_map.get(pos)
+                        if res:
+                            grade = conservation_grade(score)
+                            highlights.append(Highlight(ResidueRef(res.chain, res.number, res.icode),
+                                                        CONSERVATION_COLORS[grade - 1]))
+                            values[(res.chain, res.number, res.icode)] = round(score, 3)
+                    st.caption(f"{len(highlights)} residues colored ({identity:.1%} identity to chain {chain_id}); "
+                               "teal = variable, maroon = conserved.")
+                    render_molstar(sf, build_view_state(sf, list(table), color_mode="uniform",
+                                                        highlights=highlights, show_sticks=False))
+                    ext = "cif" if sf.fmt == "mmCIF" else "pdb"
+                    st.download_button("📥 Download structure with conservation as B-factors",
+                                       data=write_bfactors(sf, values), file_name=f"{sf.stem}_conservation.{ext}",
+                                       mime="text/plain", on_click="ignore",
+                                       help="Open in ChimeraX and use: color bfactor palette ^bluered")
 
     with tabs[-1]:
         st.subheader("🌳 Phylogenetic Tree from MSA")
