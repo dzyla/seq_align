@@ -1,0 +1,33 @@
+[theme]
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Source Serif 4:https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600&display=swap"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
+baseRadius = "0.5rem"
+showWidgetBorder = true
+showSidebarBorder = true
+chartCategoricalColors = ["#0f766e", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"]
+chartSequentialColors = ["#f0fdfa", "#ccfbf1", "#99f6e4", "#5eead4", "#2dd4bf", "#14b8a6", "#0d9488", "#0f766e", "#115e59", "#134e4a"]
+
+[theme.light]
+primaryColor = "#0f766e"
+backgroundColor = "#fbfaf7"
+secondaryBackgroundColor = "#f3f0e9"
+textColor = "#1c1b19"
+borderColor = "#e7e3da"
+linkColor = "#0f766e"
+codeBackgroundColor = "#f3f0e9"
+
+[theme.light.sidebar]
+backgroundColor = "#f3f0e9"
+
+[theme.dark]
+primaryColor = "#2dd4bf"
+backgroundColor = "#1a1916"
+secondaryBackgroundColor = "#211f1b"
+textColor = "#ece8df"
+borderColor = "#2e2c27"
+linkColor = "#5eead4"
+codeBackgroundColor = "#211f1b"
+
+[theme.dark.sidebar]
+backgroundColor = "#211f1b"
