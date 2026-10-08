@@ -172,7 +172,7 @@ def test_msa_logo_and_identity_export_render():
     at.button[0].click().run()
     assert not at.exception
     assert at.session_state["logo_window"] == (1, 11)
-    assert any(d.label == "📥 Percent identity matrix (CSV)" for d in at.get("download_button"))
+    assert any(d.label == "Percent identity matrix (CSV)" for d in at.get("download_button"))
 
 
 def test_msa_logo_guard_for_single_column(monkeypatch):

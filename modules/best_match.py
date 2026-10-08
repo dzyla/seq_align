@@ -7,6 +7,7 @@ from modules.pairwise import (
 )
 from modules.seqtools import clean_sequence
 from modules.utils import stale_notice
+from modules.ui import page_header, show_plotly
 
 SORT_OPTIONS = {
     "Relative Score": "Score as a fraction of the reference's self-alignment score (comparable across queries)",
@@ -24,7 +25,7 @@ def best_match_finder_section(sequences, seq_type):
         sequences: List of sequence records
         seq_type (str): Type of sequences ('DNA' or 'Protein')
     """
-    st.header("🔍 Best Match Finder")
+    page_header("Best match finder", "Rank every sequence against a query by alignment score or identity.")
     st.info(
         "Identify the sequence that best matches a reference sequence from a set of input sequences. "
         "Perform pairwise alignments and analyze score distributions."
@@ -145,7 +146,7 @@ def best_match_finder_section(sequences, seq_type):
             return
 
         # Display Best Match Summary
-        st.success(f"🏆 Best Match: **{best_match.id}** — {sort_metric}: **{results[0][sort_metric]:.2f}**")
+        st.success(f"Best match: **{best_match.id}** — {sort_metric}: **{results[0][sort_metric]:.2f}**", icon=":material/emoji_events:")
 
         # Detailed Alignment of Best Match
         with st.expander("Detailed Alignment", expanded=True):
@@ -171,7 +172,7 @@ def best_match_finder_section(sequences, seq_type):
                 st.error(str(e))
 
         # Visualizations
-        st.subheader("📊 Visualization")
+        st.subheader("Visualization")
 
         # Prepare data for plotting
         df_results = pd.DataFrame(results)
@@ -187,7 +188,7 @@ def best_match_finder_section(sequences, seq_type):
                 yaxis_title="Count",
                 bargap=0.1
             )
-            st.plotly_chart(fig_hist, width="stretch")
+            show_plotly(fig_hist, width="stretch")
 
         with col_plot2:
             # Scatter Plot: Score vs Length
@@ -203,10 +204,10 @@ def best_match_finder_section(sequences, seq_type):
                 xaxis_title="Sequence Length",
                 yaxis_title="Alignment Score"
             )
-            st.plotly_chart(fig_scatter, width="stretch")
+            show_plotly(fig_scatter, width="stretch")
 
         # Results Table
-        st.subheader("📋 Results Table")
+        st.subheader("Results table")
 
         # Reorder columns
         display_cols = ['Rank', 'Sequence ID', 'Relative Score', 'Identity (%)', 'Coverage (%)', 'Score', 'Length', 'Normalized Score']
@@ -215,10 +216,10 @@ def best_match_finder_section(sequences, seq_type):
         # Download results
         csv = df_results[display_cols].to_csv(index=False)
         st.download_button(
-            label="📥 Download Results (CSV)",
+            label="Download Results (CSV)",
             data=csv,
             file_name="best_match_results.csv",
-            mime="text/csv", on_click="ignore")
+            mime="text/csv", on_click="ignore", icon=":material/download:")
 
 def identity_and_coverage(aligned_ref, aligned_query, ref_length):
     """Percent identity over aligned columns and percent of the reference covered."""

@@ -13,6 +13,7 @@ from modules.parsers import parse_sequences_from_file, parse_sequences_from_text
 from modules.seqtools import clean_sequence
 from modules.structures import parse_structure
 from modules.utils import amino_acid_map
+from modules.ui import page_header
 
 HEADER_RECORDS = ("CRYST1", "SCALE", "ORIGX", "MTRIX")
 
@@ -135,7 +136,7 @@ def build_mappings(candidates, overrides=None):
         message = (f"Chain {chain_id}: {'selected' if selected else 'best match is'} {row['target_id']} with "
                    f"{row['matches']} identical residues ({row['identity']:.1%} identity over aligned columns).")
         if row["identity"] < 0.5:
-            message += " ⚠️ Low identity: check that this is the right target."
+            message += " Low identity: check that this is the right target."
         logs.append(message)
     return mappings, logs, visuals
 
@@ -196,7 +197,7 @@ def extract_header_records(pdb_text):
 
 def pdb_renumber_section(structures):
     """UI and workflow for PDB Residue Renumbering based on a target sequence."""
-    st.header("🔢 PDB Residue Renumbering")
+    page_header("PDB residue renumbering", "Renumber structure residues to match a reference sequence.")
     st.info(
         "Provide target sequences (FASTA). Each chain is matched to its best target and renumbered so "
         "residue numbers equal target positions (1-based). Insertions relative to the target get "
@@ -282,7 +283,7 @@ def pdb_renumber_section(structures):
         ext = ".cif" if is_cif else ".pdb"
         st.success("Renumbering completed successfully!")
         st.download_button(
-            label=f"📥 Download Renumbered {structure_file.fmt}",
+            label=f"Download Renumbered {structure_file.fmt}",
             data=content,
             file_name=f"{structure_file.stem}_renumbered{ext}",
-            mime="chemical/x-mmcif" if is_cif else "chemical/x-pdb", on_click="ignore")
+            mime="chemical/x-mmcif" if is_cif else "chemical/x-pdb", on_click="ignore", icon=":material/download:")

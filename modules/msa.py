@@ -29,10 +29,11 @@ from modules.structure_view import (
 from modules.variants import variant_matrix, variants_long
 from modules.phylogeny import (
     TREE_METHODS, TreeError, bootstrap_tree, build_tree_from_alignment, phylogenetic_tree_section)
+from modules.ui import page_header
 
 def msa_section(sequences, seq_type):
     """Multiple Sequence Alignment workflow. The alignment is computed once per dataset."""
-    st.header("📏 Multiple Sequence Alignment (MSA)")
+    page_header("Multiple sequence alignment", "FAMSA or MAFFT alignment with conservation, variants, logo and trees.")
     st.info("Multiple Sequence Alignment aligns three or more sequences together, "
             "identifying conserved regions and structural similarities.")
     if len(sequences) < 2:
@@ -85,7 +86,7 @@ def msa_section(sequences, seq_type):
         stale_notice()
         return
 
-    with st.expander("✂️ Alignment tools (trim columns / remove redundant sequences)"):
+    with st.expander("Alignment tools (trim columns / remove redundant sequences)"):
         max_gap = st.slider("Drop columns with gap fraction above", 0.0, 1.0, 1.0, 0.05, key="msa_trim",
                             help="1.0 keeps all columns. Trimming affects the heatmap, downloads and trees only; "
                                  "mutation, variant and conservation positions always use the full alignment.")
@@ -112,21 +113,21 @@ def msa_section(sequences, seq_type):
     tabs = st.tabs(tab_titles)
 
     with tabs[0]:
-        st.subheader("📄 MSA Result")
+        st.subheader("MSA result")
         if not view_empty:
             st.write(f"Total sequences: {len(view)}. MSA length: {len(view[0][1])}")
             plot_msa(alignment_to_codes([s for _, s in view]), [i for i, _ in view], plot_method, seq_type)
             try:
-                st.download_button(label="📥 Download MSA", data=serialize_alignment(view, msa_output_format),
+                st.download_button(label="Download MSA", data=serialize_alignment(view, msa_output_format),
                                    file_name=f"msa_alignment.{msa_output_format}", mime="text/plain",
-                                   on_click="ignore")
+                                   on_click="ignore", icon=":material/download:")
             except MSAError as e:
                 st.error(str(e))
-            st.download_button("📥 Percent identity matrix (CSV)", identity_matrix_frame(view).to_csv(),
-                               "percent_identity.csv", "text/csv", on_click="ignore")
+            st.download_button("Percent identity matrix (CSV)", identity_matrix_frame(view).to_csv(),
+                               "percent_identity.csv", "text/csv", on_click="ignore", icon=":material/download:")
 
     with tabs[tab_titles.index("Point Mutations")]:
-        st.subheader("🔍 Point Mutations Relative to Reference")
+        st.subheader("Point mutations relative to the reference")
         if any(mutations.values()):
             seq_ids = sorted(mutations)
             select_all = st.checkbox("Select all sequences", value=True, key="select_all_mutations")
@@ -141,8 +142,8 @@ def msa_section(sequences, seq_type):
                         st.write(f"**Mutations:** {', '.join(f'{r}{p}{v}' for p, r, v in mut_list)}")
             csv_mutations = convert_msa_mutations_to_csv(mutations)
             if csv_mutations:
-                st.download_button(label="📥 Download All Mutations (CSV)", data=csv_mutations,
-                                   file_name="msa_mutations.csv", mime="text/csv", on_click="ignore")
+                st.download_button(label="Download All Mutations (CSV)", data=csv_mutations,
+                                   file_name="msa_mutations.csv", mime="text/csv", on_click="ignore", icon=":material/download:")
             if seq_type == "Protein":
                 mutated = [s for s in seq_ids if mutations.get(s)]
                 if mutated:
@@ -154,7 +155,7 @@ def msa_section(sequences, seq_type):
             st.write("No point mutations detected relative to the reference sequence.")
 
     with tabs[tab_titles.index("Variant Table")]:
-        st.subheader("🧾 Variant Table (substitutions and indels)")
+        st.subheader("Variant table (substitutions and indels)")
         matrix = variant_matrix(rows, ref_seq_id)
         if matrix.empty or matrix.shape[1] == 0:
             st.write("No variants relative to the reference.")
@@ -162,14 +163,14 @@ def msa_section(sequences, seq_type):
             st.caption(f"Rows: sequences. Columns: {ref_seq_id} positions. Indels use HGVS-like notation "
                        "(e.g. V3_L4insW, A5_A6del).")
             st.dataframe(matrix, width="stretch")
-            st.download_button("📥 Variant matrix (CSV)", matrix.to_csv(), "variant_matrix.csv", "text/csv",
-                               on_click="ignore")
-            st.download_button("📥 Variants, one per row (CSV)", variants_long(rows, ref_seq_id).to_csv(index=False),
-                               "variants_long.csv", "text/csv", on_click="ignore")
+            st.download_button("Variant matrix (CSV)", matrix.to_csv(), "variant_matrix.csv", "text/csv",
+                               on_click="ignore", icon=":material/download:")
+            st.download_button("Variants, one per row (CSV)", variants_long(rows, ref_seq_id).to_csv(index=False),
+                               "variants_long.csv", "text/csv", on_click="ignore", icon=":material/download:")
 
     if calculate_representative:
         with tabs[tab_titles.index("Representative Sequence")]:
-            st.subheader("🧬 Representative Sequence Analysis")
+            st.subheader("Representative sequence")
             data = st.session_state.consensus_data
             consensus_key = (consensus_threshold, max_gap, max_id, ref_seq_id)
             if data is None or data.get('key') != consensus_key:
@@ -193,13 +194,13 @@ def msa_section(sequences, seq_type):
                 st.write(f"**Differences from consensus:** {data['min_differences']}")
                 st.code(f">{data['closest_record'].id}\n{data['closest_record'].seq}")
             st.download_button(
-                label="📥 Download Consensus/Representative (FASTA)",
+                label="Download Consensus/Representative (FASTA)",
                 data=(f">{data['consensus_record'].id}\n{data['consensus_record'].seq}\n"
                       f">{data['closest_record'].id}\n{data['closest_record'].seq}\n"),
-                file_name="consensus_representative.fasta", mime="text/plain", on_click="ignore")
+                file_name="consensus_representative.fasta", mime="text/plain", on_click="ignore", icon=":material/download:")
 
     with tabs[tab_titles.index("Conservation")]:
-        st.subheader("🎯 Conservation")
+        st.subheader("Conservation")
         ref_scores = reference_conservation(rows, ref_seq_id, seq_type)
         st.caption(f"1 − normalized Shannon entropy per column (gaps excluded; columns with > 50% gaps "
                    f"are not scored). Positions are in {ref_seq_id} coordinates.")
@@ -222,7 +223,7 @@ def msa_section(sequences, seq_type):
                 plt.close(fig)
         if seq_type == "Protein":
             ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein").replace("*", "")
-            with st.expander("🧊 Conservation on structure (Mol*) and B-factor export"):
+            with st.expander("Conservation on structure (Mol*) and B-factor export"):
                 structures = available_structures()
                 if not structures:
                     st.caption("Use 'Show on structure' in the Point Mutations tab to add a structure, "
@@ -250,14 +251,14 @@ def msa_section(sequences, seq_type):
                         render_molstar(sf, build_view_state(sf, list(table), color_mode="uniform",
                                                             highlights=highlights, show_sticks=False))
                         ext = "cif" if sf.fmt == "mmCIF" else "pdb"
-                        st.download_button("📥 Download structure with conservation as B-factors",
+                        st.download_button("Download structure with conservation as B-factors",
                                            data=write_bfactors(sf, values), file_name=f"{sf.stem}_conservation.{ext}",
                                            mime="text/plain", on_click="ignore",
                                            help="Open in ChimeraX and use: color bfactor palette ^bluered. "
-                                                "Unscored residues (gap-rich columns) and other chains are written as 0.0.")
+                                                "Unscored residues (gap-rich columns) and other chains are written as 0.0.", icon=":material/download:")
 
     with tabs[tab_titles.index("Phylogenetic Tree")]:
-        st.subheader("🌳 Phylogenetic Tree from MSA")
+        st.subheader("Phylogenetic tree from the MSA")
         c_m, c_c = st.columns(2)
         tree_method = c_m.selectbox("Tree method", list(TREE_METHODS), key="msa_tree_method")
         correction = c_c.checkbox("Correct for multiple substitutions", value=True, key="msa_tree_corr",

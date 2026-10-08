@@ -4,6 +4,7 @@ import traceback
 import anarci
 import pandas as pd
 import streamlit as st
+from modules.ui import page_header
 
 ALL_SPECIES = ["human", "mouse", "rat", "rabbit", "rhesus", "pig", "alpaca"]
 SCHEMES = ["IMGT", "Chothia", "Kabat", "Martin", "AHo", "Wolfguy"]
@@ -245,7 +246,7 @@ def _regions_html(row):
 
 
 def antibody_prediction_section(sequences):
-    st.header("🛡️ Antibody Functional Domain Prediction")
+    page_header("Antibody numbering", "Domains, CDRs, germlines and liabilities with ANARCI.")
     st.info("Predict functional domains (CDRs, Framework Regions) of antibodies using ANARCI.")
 
     if not sequences:
@@ -347,5 +348,5 @@ def antibody_prediction_section(sequences):
         row = df.loc[chosen]
         structure_highlight_panel(row["Sequence"],
                                   cdr_position_colors(row, show_liab, liabilities_by_row[chosen]),
-                                  key="ab_3d", title="🧊 CDRs on structure (Mol*)")
+                                  key="ab_3d", title="CDRs on structure (Mol*)")
         st.caption("CDR1 red · CDR2 green · CDR3 blue" + (" · liabilities orange" if show_liab else ""))

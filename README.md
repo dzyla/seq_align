@@ -29,6 +29,9 @@ The sequence type (DNA/protein) is detected automatically and can be overridden.
 | Convert Formats | FASTA, Clustal, PHYLIP (relaxed), Stockholm, NEXUS, EMBL, GenBank |
 | PDB Residue Renumbering | Renumber chains to match target sequences, with insertion codes and per-chain review |
 | Session export | One ZIP with input sequences, the main computed results and the parameters used |
+| Look and feel | "Lab notebook" day theme and "Notebook night" dark theme (switch in ⋮ → Settings, or follow your OS). The **Appearance** popover in the sidebar sets the figure palette, density, and whether interactive charts match the theme or use publication white. |
+| Phylogenetic trees | Rectangular, circular and unrooted layouts (plus cladogram), Classic ink / Support dots / Clade colour styles, midpoint or outgroup rooting, ladderize, named clades. Labels never overlap. Export SVG (editable text), PDF or 600-dpi PNG; an Explore view adds hover and zoom. |
+| Similarity matrix | Colour range from the data (off-diagonal min–max), fixed 0–1 or custom; colormap, reverse and per-cell values. |
 
 Translate DNA is offered for DNA input and Antibody Prediction for protein input; the menu adapts to the detected sequence type.
 

@@ -6,6 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 from matplotlib.colors import ListedColormap
+from modules.ui import show_plotly
 
 ALPHABET = "-ACDEFGHIKLMNPQRSTVWYXBZJOU*"
 GAP_CODE = 0
@@ -142,6 +143,6 @@ def plot_msa(codes, ids, method="Plotly (Interactive)", seq_type="Protein"):
             st.info("Alignment is too large for the interactive view; showing a static image.")
         st.image(png, width="stretch")
     else:
-        st.plotly_chart(msa_figure_plotly(codes, ids, seq_type, hover=mode == "interactive_hover"), width="stretch")
-    st.download_button("📥 Download MSA Heatmap (PNG)", data=png, file_name="msa_heatmap.png",
-                       mime="image/png", on_click="ignore")
+        show_plotly(msa_figure_plotly(codes, ids, seq_type, hover=mode == "interactive_hover"), width="stretch")
+    st.download_button("Download MSA Heatmap (PNG)", data=png, file_name="msa_heatmap.png",
+                       mime="image/png", on_click="ignore", icon=":material/download:")

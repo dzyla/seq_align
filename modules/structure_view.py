@@ -10,6 +10,7 @@ from molviewspec import ComponentExpression
 from modules.fetch import FetchError, fetch_alphafold_structure, fetch_pdb_structure, validate_ids
 from modules.pdb_renumber import align_target_to_chain, get_mapping_from_alignment
 from modules.structures import StructureFile, chain_residue_table, parse_structure
+from modules.ui import page_header
 
 MOLSTAR_VERSION = "5.10.1"
 CHAIN_COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7",
@@ -126,7 +127,7 @@ def is_predicted_model(sf):
 
 
 def structure_viewer_section(structures):
-    st.header("🧊 Structure Viewer (Mol*)")
+    page_header("Structure viewer", "Interactive 3D view with Mol*.")
     if not structures:
         st.warning("Load a PDB/mmCIF file or fetch a structure in the sidebar first.")
         return
@@ -203,7 +204,7 @@ def _chain_key(key, ref_seq):
     return f"{key}_chain_{hashlib.sha1(ref_seq.encode()).hexdigest()[:8]}"
 
 
-def structure_highlight_panel(ref_seq, position_colors, key, title="🧊 Show on structure (Mol*)"):
+def structure_highlight_panel(ref_seq, position_colors, key, title="Show on structure (Mol*)"):
     """Color reference positions on a structure; `position_colors` maps position -> (hex color, label)."""
     with st.expander(title):
         _add_structure_controls(key)

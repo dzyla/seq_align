@@ -79,3 +79,21 @@ def test_named_palette_and_publication_white_charts(tmp_path):
     """)
     assert at.session_state["out"] == ("Cividis", "white")
     assert len(at.get("plotly_chart")) == 1
+
+
+import re
+
+EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿⭐⬆️]")
+SOURCES = [ROOT / "app.py", *sorted((ROOT / "modules").glob("*.py"))]
+
+
+def test_no_emoji_in_app_source():
+    hits = [f"{f.name}:{i}" for f in SOURCES
+            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1) if EMOJI.search(line)]
+    assert hits == []
+
+
+def test_plotly_charts_go_through_show_plotly():
+    hits = [f"{f.name}:{i}" for f in SOURCES if f.name != "ui.py"
+            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1) if "st.plotly_chart(" in line]
+    assert hits == []

@@ -16,6 +16,7 @@ from collections import deque
 from scipy.cluster.hierarchy import fcluster, leaves_list, linkage
 from scipy.spatial.distance import squareform
 from modules.seqtools import clean_sequence
+from modules.ui import page_header, show_plotly
 
 HIERARCHICAL = "Hierarchical (average linkage)"
 CONNECTED = "Connected components (single linkage)"
@@ -29,7 +30,7 @@ def sequence_clustering_section(sequences, seq_type):
     """
     Handles the Sequence Clustering workflow with enhanced features.
     """
-    st.header("🧩 Sequence Clustering")
+    page_header("Sequence clustering", "Group sequences by pairwise similarity.")
     st.info("Group similar sequences together based on pairwise similarity.")
 
     if len(sequences) < 2:
@@ -89,7 +90,7 @@ def sequence_clustering_section(sequences, seq_type):
             fig_cov = px.area(pd.DataFrame({"Position": range(1, align_len + 1), "Coverage": coverage}),
                               x="Position", y="Coverage", title="Sequence Coverage per Position")
             fig_cov.update_layout(height=250, margin=dict(l=0, r=0, t=30, b=0))
-            st.plotly_chart(fig_cov, width="stretch")
+            show_plotly(fig_cov, width="stretch")
 
             st.subheader("MSA Slicing")
             st.write(f"MSA Length: {align_len}")
@@ -120,7 +121,7 @@ def sequence_clustering_section(sequences, seq_type):
         ids = st.session_state.clustering_ids
 
         st.divider()
-        st.subheader("📊 Analysis")
+        st.subheader("Analysis")
 
         clustering_method = st.radio(
             "Clustering Method",
@@ -205,7 +206,7 @@ def sequence_clustering_section(sequences, seq_type):
                 fig_pca.update_traces(marker=dict(size=12))
                 fig_pca.update_yaxes(scaleanchor="x", scaleratio=1)
                 fig_pca.update_layout(width=700, height=700)
-                st.plotly_chart(fig_pca, width="content")
+                show_plotly(fig_pca, width="content")
             else:
                 st.info("Need at least 3 sequences for PCoA.")
 
@@ -223,10 +224,10 @@ def sequence_clustering_section(sequences, seq_type):
             df_clusters = pd.DataFrame(cluster_data)
             st.dataframe(df_clusters, width="stretch")
             st.download_button(
-                "📥 Download Clusters (CSV)",
+                "Download Clusters (CSV)",
                 df_clusters.to_csv(index=False),
                 "clusters.csv",
-                "text/csv", on_click="ignore")
+                "text/csv", on_click="ignore", icon=":material/download:")
 
             # ZIP Export for clusters with size >= 2
             valid_clusters = [c for c in clusters if len(c) >= 2]
@@ -249,11 +250,11 @@ def sequence_clustering_section(sequences, seq_type):
                         zip_file.writestr(f"cluster_{idx}.fasta", fasta_str.getvalue())
 
                 st.download_button(
-                    label="📥 Download Clusters (ZIP)",
+                    label="Download Clusters (ZIP)",
                     data=zip_buffer.getvalue(),
                     file_name="clusters.zip",
                     mime="application/zip",
-                    help="Download clusters with 2 or more sequences as individual FASTA files.", on_click="ignore")
+                    help="Download clusters with 2 or more sequences as individual FASTA files.", on_click="ignore", icon=":material/download:")
             else:
                  st.info("No clusters with 2 or more sequences to export.")
 
@@ -272,10 +273,10 @@ def sequence_clustering_section(sequences, seq_type):
                 yaxis_title="Count",
                 bargap=0.1
             )
-            st.plotly_chart(fig_hist, width="stretch")
+            show_plotly(fig_hist, width="stretch")
 
         with tab3:
-            from modules.ui import palette_colorscale, show_plotly
+            from modules.ui import palette_colorscale
 
             st.subheader("Similarity matrix")
             order = cluster_order(ids, clusters, leaf_order)
@@ -312,7 +313,7 @@ def sequence_clustering_section(sequences, seq_type):
                                               distfun=lambda _x: condensed, color_threshold=1 - threshold,
                                               linkagefun=lambda d: linkage(d, method="average"))
                 fig_dg.update_layout(title="Average-linkage dendrogram (distance = 1 − similarity)", height=450)
-                st.plotly_chart(fig_dg, width="stretch")
+                show_plotly(fig_dg, width="stretch")
 
 def msa_identity_matrix(aligned):
     """Pairwise identity from aligned strings: identical residues / columns where either has a residue."""

@@ -2,6 +2,7 @@
 import pandas as pd
 import streamlit as st
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
+from modules.ui import page_header
 
 STANDARD_AA = frozenset("ACDEFGHIKLMNPQRSTVWY")
 COLUMNS = ["Length", "MW (Da)", "pI", "Ext. coeff. (reduced)", "Ext. coeff. (cystines)",
@@ -39,12 +40,12 @@ def properties_table(records):
 
 
 def sequence_properties_section(sequences):
-    st.header("⚗️ Sequence Properties")
+    page_header("Sequence properties", "Molecular weight, pI, extinction coefficients, GRAVY and more.")
     st.info("Molecular weight, pI, extinction coefficients (M⁻¹cm⁻¹ at 280 nm), A280 of a 1 mg/mL solution, "
             "GRAVY, instability index and aromaticity (Biopython ProtParam). Non-standard residues are excluded.")
     df = properties_table(sequences)
     st.dataframe(df.round(3), hide_index=True, width="stretch")
-    st.download_button("📥 Properties (CSV)", df.to_csv(index=False), "sequence_properties.csv", "text/csv",
-                       on_click="ignore")
+    st.download_button("Properties (CSV)", df.to_csv(index=False), "sequence_properties.csv", "text/csv",
+                       on_click="ignore", icon=":material/download:")
     if (df["Non-standard removed"] > 0).any():
         st.caption("Some sequences contained non-standard residues (X, U, B, Z, *), which were excluded.")

@@ -6,6 +6,7 @@ from io import StringIO
 
 from modules.msa import MSAError, run_msa
 from modules.utils import have_params_changed, stale_notice
+from modules.ui import page_header
 
 OUTPUT_FORMATS = ("fasta", "clustal", "phylip-relaxed", "stockholm", "nexus", "embl", "genbank")
 ALIGNMENT_FORMATS = {"clustal", "phylip-relaxed", "stockholm", "nexus"}
@@ -36,7 +37,7 @@ def convert_format(sequences, output_format, seq_type="Protein"):
 
 def format_conversion_section(sequences, input_format, seq_type="Protein"):
     """Handles the sequence format conversion workflow."""
-    st.header("🔄 Sequence Format Conversion")
+    page_header("Format conversion", "Convert sequences between file formats.")
     st.info("Convert your sequences between different file formats.")
 
     output_format = st.selectbox("Select Output Format", OUTPUT_FORMATS,
@@ -81,9 +82,9 @@ def format_conversion_section(sequences, input_format, seq_type="Protein"):
         st.success("Format conversion successful.")
         st.text(st.session_state.converted_data)
         st.download_button(
-            label="📥 Download Converted File",
+            label="Download Converted File",
             data=st.session_state.converted_data,
             file_name=f"converted_sequences.{FILE_EXTENSIONS[output_format]}",
-            mime="text/plain", on_click="ignore")
+            mime="text/plain", on_click="ignore", icon=":material/download:")
     elif st.session_state.get('conversion_error'):
         st.error(f"Format conversion failed: {st.session_state.conversion_error}")

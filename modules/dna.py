@@ -8,6 +8,7 @@ from Bio.Seq import Seq
 
 from modules.seqtools import clean_sequence
 from modules.utils import stale_notice
+from modules.ui import page_header, show_plotly
 
 CODON_TABLES = {
     "1 Standard": 1,
@@ -21,7 +22,7 @@ def dna_translation_section(sequences):
     """
     Handles the DNA Translation workflow.
     """
-    st.header("🧬 DNA Translation & ORF Finder")
+    page_header("DNA translation and ORFs", "Translate in all frames and find open reading frames.")
     st.info("Translate DNA sequences to protein and find Open Reading Frames (ORFs).")
 
     if not sequences:
@@ -60,7 +61,7 @@ def dna_translation_section(sequences):
     except Exception as e:
         st.error(f"Error during translation: {e}")
 
-    st.markdown("### 🕵️ ORF Finder")
+    st.subheader("ORF finder")
     min_len = st.number_input("Minimum ORF Length (AA)", value=30, min_value=10, step=5)
     params = {"id": selected_seq.id, "seq": str(selected_seq.seq), "min_len": min_len, "table": table}
 
@@ -172,7 +173,7 @@ def restriction_map_figure(sites_df, seq_length, enzymes):
 
 
 def dna_tools_section(sequences):
-    st.header("🧰 DNA Tools")
+    page_header("DNA tools", "Reverse complement, codon usage and restriction map.")
     selected_id = st.selectbox("Sequence", [s.id for s in sequences], key="dna_tools_seq")
     seq = str(next(s for s in sequences if s.id == selected_id).seq)
     tab_rc, tab_codon, tab_re = st.tabs(["Reverse complement", "Codon usage", "Restriction map"])
@@ -180,8 +181,8 @@ def dna_tools_section(sequences):
     with tab_rc:
         rc = reverse_complement(seq)
         st.code(rc)
-        st.download_button("📥 Reverse complement (FASTA)", f">{selected_id}_revcomp\n{rc}\n",
-                           f"{selected_id}_revcomp.fasta", "text/plain", on_click="ignore")
+        st.download_button("Reverse complement (FASTA)", f">{selected_id}_revcomp\n{rc}\n",
+                           f"{selected_id}_revcomp.fasta", "text/plain", on_click="ignore", icon=":material/download:")
 
     with tab_codon:
         c1, c2 = st.columns(2)
@@ -189,8 +190,8 @@ def dna_tools_section(sequences):
         table = CODON_TABLES[c2.selectbox("Codon table", list(CODON_TABLES), key="codon_table")]
         usage = codon_usage(seq, frame, table)
         st.dataframe(usage.round(3), hide_index=True, width="stretch")
-        st.download_button("📥 Codon usage (CSV)", usage.to_csv(index=False), "codon_usage.csv", "text/csv",
-                           on_click="ignore")
+        st.download_button("Codon usage (CSV)", usage.to_csv(index=False), "codon_usage.csv", "text/csv",
+                           on_click="ignore", icon=":material/download:")
 
     with tab_re:
         c1, c2 = st.columns(2)
@@ -202,8 +203,8 @@ def dna_tools_section(sequences):
             return
         unique = sites[sites["Cuts"] == 1]["Enzyme"].tolist()
         shown = st.multiselect("Enzymes on map", sites["Enzyme"].tolist(), default=unique[:15], key="re_shown")
-        st.plotly_chart(restriction_map_figure(sites, len(clean_sequence(seq, "DNA")), shown), width="stretch")
+        show_plotly(restriction_map_figure(sites, len(clean_sequence(seq, "DNA")), shown), width="stretch")
         st.dataframe(sites, hide_index=True, width="stretch")
         st.caption(f"{len(unique)} unique cutter(s). Positions are the first nucleotide after the top-strand cut.")
-        st.download_button("📥 Restriction sites (CSV)", sites.to_csv(index=False), "restriction_sites.csv",
-                           "text/csv", on_click="ignore")
+        st.download_button("Restriction sites (CSV)", sites.to_csv(index=False), "restriction_sites.csv",
+                           "text/csv", on_click="ignore", icon=":material/download:")

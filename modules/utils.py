@@ -82,7 +82,7 @@ def track_dataset(fp, state=None):
 
 def stale_notice(message=STALE_MESSAGE):
     """Tell the user the shown inputs differ from the ones used for the stored result."""
-    st.info(message, icon="🔄")
+    st.info(message, icon=":material/refresh:")
 
 
 def have_params_changed(current_params: dict, last_params_key: str) -> bool:

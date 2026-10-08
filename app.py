@@ -253,14 +253,14 @@ def main():
     alignment_mode = st.sidebar.radio("Analysis", options, key="analysis_select", label_visibility="collapsed")
 
     if alignment_mode == "Extracted Sequences":
-        st.header("📄 Extracted FASTA Sequences")
+        page_header("Extracted sequences", "FASTA sequences read from the uploaded structures.")
         fasta_io = StringIO()
         SeqIO.write(sequences, fasta_io, "fasta")
         fasta_str = fasta_io.getvalue()
         st.text_area("FASTA Sequences", value=fasta_str, height=500)
         stem = next(iter(structures.values())).stem if len(structures) == 1 else "extracted"
-        st.download_button(label="📥 Download FASTA", data=fasta_str, file_name=f"{stem}_sequences.fasta",
-                           mime="text/plain", on_click="ignore")
+        st.download_button(label="Download FASTA", data=fasta_str, file_name=f"{stem}_sequences.fasta",
+                           mime="text/plain", on_click="ignore", icon=":material/download:")
     elif alignment_mode == "Pairwise":
         pairwise_alignment_section(sequences, seq_type)
     elif alignment_mode == "MSA":

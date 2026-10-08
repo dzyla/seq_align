@@ -11,6 +11,7 @@ from modules.seqtools import clean_sequence
 from modules.variants import call_variants
 from functools import lru_cache
 from dataclasses import dataclass, field
+from modules.ui import page_header, show_plotly
 
 DEFAULT_OPEN_GAP = -10.0
 DEFAULT_EXTEND_GAP = -0.5
@@ -34,7 +35,7 @@ def pairwise_alignment_section(sequences, seq_type):
         sequences: List of sequence records to align
         seq_type (str): Type of sequences ('DNA' or 'Protein')
     """
-    st.header("🔀 Pairwise Alignment")
+    page_header("Pairwise alignment", "Global, local or overlap alignment against a reference; mutations in reference coordinates.")
 
     if len(sequences) < 2:
         st.warning("Please upload at least two sequences for pairwise alignment.")
@@ -172,7 +173,7 @@ def pairwise_alignment_section(sequences, seq_type):
 
     alignment_text = format_result_text(result)
     stats = compute_alignment_stats(result.aligned_ref, result.aligned_query, result.match_line)
-    st.subheader("🧬 Alignment Result")
+    st.subheader("Alignment result")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Identity", f"{stats['identity_pct']}%", f"{stats['identical']}/{stats['length']}", delta_color="off")
     c2.metric("Similarity", f"{stats['similarity_pct']}%", f"{stats['similar']}/{stats['length']}", delta_color="off")
@@ -182,16 +183,16 @@ def pairwise_alignment_section(sequences, seq_type):
     for note in result.notes:
         st.caption(note)
 
-    st.subheader("🔍 Point Mutations Relative to Reference")
+    st.subheader("Point mutations relative to the reference")
     fig = mutation_lollipop(result.mutations, result.ref_length, seq_type)
     if fig is None:
         st.write("No point mutations detected.")
     else:
         st.write(f"**{len(result.mutations)} substitutions:** {', '.join(result.mutations)}")
-        st.plotly_chart(fig, width="stretch")
-        st.download_button(label="📥 Download Mutations (CSV)", data=convert_mutations_to_csv(result.mutations),
+        show_plotly(fig, width="stretch")
+        st.download_button(label="Download Mutations (CSV)", data=convert_mutations_to_csv(result.mutations),
                            file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv", mime="text/csv",
-                           on_click="ignore")
+                           on_click="ignore", icon=":material/download:")
 
     indels = [v.label for v in call_variants(result.aligned_ref, result.aligned_query, result.ref_start,
                                              result.ref_rotation, result.ref_length) if v.kind != "sub"]
@@ -206,9 +207,9 @@ def pairwise_alignment_section(sequences, seq_type):
             key="pairwise_3d",
         )
 
-    st.download_button(label="📥 Download Alignment", data=alignment_text,
+    st.download_button(label="Download Alignment", data=alignment_text,
                        file_name=f"pairwise_alignment_{reference_id}_vs_{target_id}.txt", mime="text/plain",
-                       on_click="ignore")
+                       on_click="ignore", icon=":material/download:")
 
 def get_aligner(seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP, extend_gap_score=DEFAULT_EXTEND_GAP):
     """
