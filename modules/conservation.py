@@ -88,9 +88,15 @@ def logo_matrix(aligned, seq_type="Protein", start=1, end=None):
     else:
         counts = logomaker.alignment_to_matrix(window, to_type="counts", characters_to_ignore=".-XNBZJOU*")
         counts = counts.reindex(columns=alphabet, fill_value=0)
-        background = np.ones(len(alphabet)) / len(alphabet)
-        matrix = logomaker.transform_matrix(counts, from_type="counts", to_type="information",
-                                            pseudocount=0, background=background).fillna(0.0)
+        # Information per column against a uniform background (logomaker's definition); gap-only rows are zero.
+        values = counts.to_numpy(dtype=float)
+        totals = values.sum(axis=1, keepdims=True)
+        probs = np.divide(values, totals, out=np.zeros_like(values), where=totals > 0)
+        q = 1.0 / len(alphabet)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            terms = np.where(probs > 0, probs * np.log2(probs / q), 0.0)
+        info = terms.sum(axis=1, keepdims=True)
+        matrix = pd.DataFrame(probs * info, index=counts.index, columns=alphabet)
     matrix.index = matrix.index + start
     return matrix
 

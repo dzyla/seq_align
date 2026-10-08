@@ -100,3 +100,11 @@ def test_logo_all_gap_column_is_zero_not_nan():
     m = logo_matrix(["-", "-", "-"])
     assert not m.isna().any().any()
     assert m.sum(axis=1).iloc[0] == 0
+
+
+def test_logo_gap_column_inside_multi_column_window():
+    m = logo_matrix(["MK-", "MK-", "MR-"])
+    assert m.shape == (3, 20)
+    assert not m.isna().any().any()
+    assert m.sum(axis=1).iloc[2] == 0
+    assert m.sum(axis=1).iloc[0] == pytest.approx(math.log2(20), abs=1e-6)
