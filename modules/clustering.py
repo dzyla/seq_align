@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.figure_factory as ff
 from io import StringIO
 import zipfile
 import io
@@ -128,6 +129,7 @@ def sequence_clustering_section(sequences, seq_type):
 
         clusters = []
         threshold = None
+        leaf_order = None
         similarities = matrix[np.triu_indices_from(matrix, k=1)]
 
         if clustering_method in (HIERARCHICAL, CONNECTED):
@@ -139,7 +141,7 @@ def sequence_clustering_section(sequences, seq_type):
                      "The default comes from Otsu's method on the similarity histogram."
             )
             if clustering_method == HIERARCHICAL:
-                clusters, _ = hierarchical_clusters(matrix, ids, threshold)
+                clusters, leaf_order = hierarchical_clusters(matrix, ids, threshold)
             else:
                 clusters = find_clusters(matrix, ids, threshold)
         elif len(ids) < 3:
@@ -271,20 +273,31 @@ def sequence_clustering_section(sequences, seq_type):
 
         with tab3:
             st.markdown("### Similarity Matrix")
+            order = cluster_order(ids, clusters, leaf_order)
+            ordered_ids = [ids[i] for i in order]
             fig_hm = go.Figure(data=go.Heatmap(
-                z=matrix,
-                x=ids,
-                y=ids,
-                colorscale="Viridis",
-                zmin=0, zmax=1
-            ))
-            fig_hm.update_layout(
-                title="Pairwise Similarity Matrix",
-                xaxis_showticklabels=False,
-                yaxis_showticklabels=False,
-                height=600
-            )
+                z=matrix[np.ix_(order, order)], x=ordered_ids, y=ordered_ids, colorscale="Viridis",
+                zmin=0, zmax=1, hovertemplate="%{y} vs %{x}: %{z:.3f}<extra></extra>"))
+            show_labels = len(ids) <= 60
+            fig_hm.update_layout(title="Pairwise Similarity Matrix (ordered by cluster)", height=700,
+                                 xaxis_showticklabels=show_labels, yaxis_showticklabels=show_labels,
+                                 yaxis_autorange="reversed")
             st.plotly_chart(fig_hm, width="stretch")
+            if clustering_method == HIERARCHICAL and 2 < len(ids) <= 200:
+                condensed = squareform(np.clip(1 - matrix, 0, None), checks=False)
+                fig_dg = ff.create_dendrogram(np.arange(len(ids)).reshape(-1, 1), labels=ids,
+                                              distfun=lambda _x: condensed,
+                                              linkagefun=lambda d: linkage(d, method="average"))
+                fig_dg.update_layout(title="Average-linkage dendrogram (distance = 1 − similarity)", height=450)
+                st.plotly_chart(fig_dg, width="stretch")
+
+def cluster_order(ids, clusters, leaf_order=None):
+    """Row order for heatmaps: dendrogram leaf order if given, else grouped by cluster."""
+    if leaf_order is not None:
+        return list(leaf_order)
+    index = {seq_id: i for i, seq_id in enumerate(ids)}
+    return [index[seq_id] for cluster in clusters for seq_id in cluster]
+
 
 def msa_identity_matrix(aligned):
     """Pairwise identity from aligned strings: identical residues / columns where either has a residue."""

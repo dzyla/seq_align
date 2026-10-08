@@ -80,5 +80,11 @@ class TestClustering(unittest.TestCase):
         self.assertEqual(coords.shape, (3, 2))
         self.assertLess(np.linalg.norm(coords[0] - coords[1]), np.linalg.norm(coords[0] - coords[2]))
 
+    def test_cluster_order(self):
+        from modules.clustering import cluster_order
+        ids = ["a", "b", "c", "d"]
+        self.assertEqual(cluster_order(ids, [["c", "a"], ["d"], ["b"]]), [2, 0, 3, 1])
+        self.assertEqual(cluster_order(ids, [], leaf_order=[3, 1, 0, 2]), [3, 1, 0, 2])
+
 if __name__ == '__main__':
     unittest.main()

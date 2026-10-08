@@ -74,3 +74,10 @@ def test_plotly_y_axis_is_categorical_for_numeric_ids():
     from modules.viz import alignment_to_codes, msa_figure_plotly
     fig = msa_figure_plotly(alignment_to_codes(["MK", "ML", "MV"]), ["1", "2", "10"], "Protein")
     assert fig.layout.yaxis.type == "category"
+
+
+def test_letters_shown_only_for_small_alignments():
+    small = alignment_to_codes(["MKV", "MKL"])
+    assert msa_figure_plotly(small, ["a", "b"], "Protein").data[0].texttemplate == "%{text}"
+    big = alignment_to_codes(["M" * 2000, "K" * 2000])
+    assert msa_figure_plotly(big, ["a", "b"], "Protein").data[0].texttemplate is None
