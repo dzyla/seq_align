@@ -185,3 +185,39 @@ def test_msa_logo_guard_for_single_column(monkeypatch):
     assert not at.exception
     assert any("Logo needs at least 2 columns" in c.value for c in at.caption)
     assert not any(s.key == "logo_window" for s in at.slider)
+
+
+def _load_globins_msa():
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.selectbox(key="analysis_select").select("MSA").run()
+    at.button[0].click().run()
+    assert not at.exception
+    return at
+
+
+def test_msa_tree_goes_stale_when_redundancy_changes():
+    at = _load_globins_msa()
+    next(b for b in at.button if "Phylogenetic" in b.label).click().run()
+    assert not at.exception
+    assert at.session_state["msa_tree"] is not None
+    assert not any("Settings changed" in i.value for i in at.info)
+    at.slider(key="msa_redundancy").set_value(0.5).run()
+    assert not at.exception
+    assert any("Settings changed" in i.value for i in at.info)
+
+
+def test_msa_all_columns_trimmed_shows_one_warning(monkeypatch):
+    import modules.msa as msa_module
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": [
+        ("a", "MK-"), ("b", "-LA"), ("c", "M--")])
+    at = load(">a\nMKV\n>b\nLAV\n>c\nMLV\n")
+    at.selectbox(key="analysis_select").select("MSA").run()
+    at.button[0].click().run()
+    assert not at.exception
+    at.slider(key="msa_trim").set_value(0.0).run()
+    assert not at.exception
+    msgs = [w.value for w in at.warning if "All alignment columns were removed" in w.value]
+    assert len(msgs) == 1

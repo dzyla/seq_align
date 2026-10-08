@@ -78,7 +78,8 @@ DNA_ALPHABET = list("ACGT")
 
 def logo_matrix(aligned, seq_type="Protein", start=1, end=None):
     """Information content (bits) per residue for alignment columns start..end (1-based, inclusive),
-    against a uniform background over the full alphabet, without pseudocounts."""
+    against a uniform background over the full alphabet, without pseudocounts,
+    scaled by each column's fraction of alphabet residues (non-gap fraction)."""
     alphabet = DNA_ALPHABET if seq_type == "DNA" else PROTEIN_ALPHABET
     # Gaps plus ambiguity codes; protein N (asparagine) is a residue and is counted.
     ignore = "-.NRYKMSWBDHV" if seq_type == "DNA" else "-.XBZJOU*"
@@ -98,7 +99,9 @@ def logo_matrix(aligned, seq_type="Protein", start=1, end=None):
         with np.errstate(divide="ignore", invalid="ignore"):
             terms = np.where(probs > 0, probs * np.log2(probs / q), 0.0)
         info = terms.sum(axis=1, keepdims=True)
-        matrix = pd.DataFrame(probs * info, index=counts.index, columns=alphabet)
+        # Scale by the column's non-gap fraction so mostly-gap columns do not look fully conserved.
+        occupancy = totals / len(window)
+        matrix = pd.DataFrame(probs * info * occupancy, index=counts.index, columns=alphabet)
     matrix.index = matrix.index + start
     return matrix
 

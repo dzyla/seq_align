@@ -95,6 +95,10 @@ def msa_section(sequences, seq_type):
         st.caption(f"{len(removed)} redundant sequence(s) hidden: "
                    + ", ".join(f"{r} (≈ {k})" for r, k in list(removed.items())[:20]))
 
+    view_empty = not view or len(view[0][1]) == 0
+    if view_empty:
+        st.warning("All alignment columns were removed by trimming; raise the gap threshold.")
+
     try:
         mutations = cached_mutations(tuple(rows), ref_seq_id)
     except MSAError as e:
@@ -108,15 +112,17 @@ def msa_section(sequences, seq_type):
 
     with tabs[0]:
         st.subheader("📄 MSA Result")
-        st.write(f"Total sequences: {len(view)}. MSA length: {len(view[0][1])}")
-        plot_msa(alignment_to_codes([s for _, s in view]), [i for i, _ in view], plot_method, seq_type)
-        try:
-            st.download_button(label="📥 Download MSA", data=serialize_alignment(view, msa_output_format),
-                               file_name=f"msa_alignment.{msa_output_format}", mime="text/plain", on_click="ignore")
-        except MSAError as e:
-            st.error(str(e))
-        st.download_button("📥 Percent identity matrix (CSV)", identity_matrix_frame(view).to_csv(),
-                           "percent_identity.csv", "text/csv", on_click="ignore")
+        if not view_empty:
+            st.write(f"Total sequences: {len(view)}. MSA length: {len(view[0][1])}")
+            plot_msa(alignment_to_codes([s for _, s in view]), [i for i, _ in view], plot_method, seq_type)
+            try:
+                st.download_button(label="📥 Download MSA", data=serialize_alignment(view, msa_output_format),
+                                   file_name=f"msa_alignment.{msa_output_format}", mime="text/plain",
+                                   on_click="ignore")
+            except MSAError as e:
+                st.error(str(e))
+            st.download_button("📥 Percent identity matrix (CSV)", identity_matrix_frame(view).to_csv(),
+                               "percent_identity.csv", "text/csv", on_click="ignore")
 
     with tabs[tab_titles.index("Point Mutations")]:
         st.subheader("🔍 Point Mutations Relative to Reference")
@@ -164,12 +170,13 @@ def msa_section(sequences, seq_type):
         with tabs[tab_titles.index("Representative Sequence")]:
             st.subheader("🧬 Representative Sequence Analysis")
             data = st.session_state.consensus_data
-            if data is None or data['threshold'] != consensus_threshold:
+            consensus_key = (consensus_threshold, max_gap, max_id, ref_seq_id)
+            if data is None or data.get('key') != consensus_key:
                 alignment = aligned_to_msa(rows)
                 consensus_record, closest_record, min_diff, closest_seq_id = calculate_representative_sequence(
                     alignment, threshold=consensus_threshold, seq_type=seq_type)
                 data = st.session_state.consensus_data = {
-                    'threshold': consensus_threshold, 'consensus_record': consensus_record,
+                    'key': consensus_key, 'threshold': consensus_threshold, 'consensus_record': consensus_record,
                     'closest_record': closest_record, 'min_differences': min_diff,
                     'closest_seq_id': closest_seq_id, 'seq_count': len(alignment),
                 }
@@ -197,18 +204,21 @@ def msa_section(sequences, seq_type):
                    f"are not scored). Positions are in {ref_seq_id} coordinates.")
         st.line_chart(pd.DataFrame({"Conservation": pd.Series(ref_scores)}), x_label="Reference position",
                       y_label="Conservation")
-        length = len(view[0][1])
-        if length < 2:
-            st.caption("Logo needs at least 2 columns.")
-        else:
-            start, end = st.slider("Logo window (alignment columns)", 1, length, (1, min(length, 60)),
-                                   key="logo_window")
-            if end - start + 1 > 120:
-                st.warning("Showing the first 120 columns of the window.")
-                end = start + 119
-            fig = logo_figure(logo_matrix([s for _, s in view], seq_type, start, end), seq_type)
-            st.pyplot(fig)
-            plt.close(fig)
+        if not view_empty:
+            st.caption("Information content in bits against a uniform background, "
+                       "scaled by each column's non-gap fraction.")
+            length = len(view[0][1])
+            if length < 2:
+                st.caption("Logo needs at least 2 columns.")
+            else:
+                start, end = st.slider("Logo window (alignment columns)", 1, length, (1, min(length, 60)),
+                                       key="logo_window")
+                if end - start + 1 > 120:
+                    st.warning("Showing the first 120 columns of the window.")
+                    end = start + 119
+                fig = logo_figure(logo_matrix([s for _, s in view], seq_type, start, end), seq_type)
+                st.pyplot(fig)
+                plt.close(fig)
         if seq_type == "Protein":
             ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein").replace("*", "")
             with st.expander("🧊 Conservation on structure (Mol*) and B-factor export"):
@@ -253,8 +263,9 @@ def msa_section(sequences, seq_type):
                                   help="Jukes–Cantor (DNA) or Kimura (protein) distance correction.")
         replicates = st.number_input("Bootstrap replicates", 0, 1000, 0, 50, key="msa_bootstrap",
                                      help="0 = no bootstrap. 100 is a common choice.")
-        tree_params = {"method": tree_method, "correction": correction, "replicates": replicates}
-        if st.button("Calculate Phylogenetic Tree from MSA"):
+        tree_params = {"method": tree_method, "correction": correction, "replicates": replicates,
+                       "max_gap": max_gap, "max_id": max_id, "ref_seq_id": ref_seq_id}
+        if st.button("Calculate Phylogenetic Tree from MSA", disabled=view_empty):
             with st.spinner("Building tree from MSA..."):
                 try:
                     if replicates > 0:

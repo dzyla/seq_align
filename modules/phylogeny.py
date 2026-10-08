@@ -160,6 +160,8 @@ def _tree_from_matrix(names, matrix, method):
     constructor = DistanceTreeConstructor()
     dm = DistanceMatrix(names=list(names), matrix=lower)
     tree = constructor.nj(dm) if method == "nj" else constructor.upgma(dm)
+    for clade in tree.get_nonterminals():
+        clade.name = None  # Biopython's "Inner1" names would be glued to supports in Newick
     if method == "nj":
         for clade in tree.find_clades():
             if clade.branch_length is not None and clade.branch_length < 0:

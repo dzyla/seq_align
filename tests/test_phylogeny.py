@@ -111,3 +111,16 @@ def test_bootstrap_tree_same_seed_same_supports():
         t = bootstrap_tree(GROUPED, "DNA", correction=False, replicates=20, seed=3)
         return [c.confidence for c in t.get_nonterminals()]
     assert supports() == supports()
+
+
+def test_bootstrap_supports_survive_newick_round_trip():
+    from io import StringIO
+    from Bio import Phylo
+    from modules.phylogeny import tree_to_newick
+    tree = bootstrap_tree(GROUPED, "DNA", method="nj", correction=False, replicates=20, seed=1)
+    back = Phylo.read(StringIO(tree_to_newick(tree)), "newick")
+    inner = [c for c in back.get_nonterminals() if c is not back.root]
+    assert inner
+    for clade in back.get_nonterminals():
+        assert clade.name is None
+    assert all(isinstance(c.confidence, (int, float)) for c in inner)

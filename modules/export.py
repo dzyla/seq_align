@@ -10,6 +10,7 @@ from Bio import SeqIO
 from modules.seqtools import fingerprint
 
 PARAM_KEYS = ("last_pairwise_params", "last_msa_params", "best_match_params", "last_conversion_params")
+NESTED_PARAM_KEYS = ("tree_result", "msa_tree", "orf_results", "antibody_results")
 RESULT_KEYS_EXPORTED = ("pairwise_result", "msa_aligned", "best_match_results", "clustering_matrix",
                         "antibody_results", "orf_results", "tree_result", "msa_tree", "converted_data")
 
@@ -57,6 +58,11 @@ def build_session_zip(state, sequences, seq_type):
         files["tree.nwk"] = tree_to_newick(state["tree_result"]["tree"])
     if _filled(state.get("msa_tree")):
         files["msa_tree.nwk"] = tree_to_newick(state["msa_tree"]["tree"])
+    consensus = state.get("consensus_data")
+    if _filled(consensus):
+        files["consensus_representative.fasta"] = (
+            f">{consensus['consensus_record'].id}\n{consensus['consensus_record'].seq}\n"
+            f">{consensus['closest_record'].id}\n{consensus['closest_record'].seq}\n")
     if _filled(state.get("converted_data")):
         files["converted_sequences.txt"] = state["converted_data"]
 
@@ -66,7 +72,13 @@ def build_session_zip(state, sequences, seq_type):
         "dataset_fingerprint": fingerprint(sequences),
         "sequence_count": len(sequences),
         "parameters": {k: state[k] for k in PARAM_KEYS if state.get(k)},
+        "result_parameters": {k: state[k]["params"] for k in NESTED_PARAM_KEYS
+                              if isinstance(state.get(k), dict) and "params" in state[k]},
     }
+    view = {name: state[key] for name, key in (("max_gap", "msa_trim"), ("max_id", "msa_redundancy"))
+            if state.get(key) is not None}
+    if view:
+        meta["msa_view"] = view
     files["session.json"] = json.dumps(meta, indent=2, default=str)
     files["README.txt"] = ("Advanced Sequence Alignment Tool: session export\n\n"
                            + "\n".join(f"- {name}" for name in sorted(files)) + "\n")

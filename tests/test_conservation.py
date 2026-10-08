@@ -118,9 +118,18 @@ def test_logo_protein_asparagine_column_counts():
 def test_logo_asparagine_among_gaps_in_window():
     m = logo_matrix(["MK-X", "MKN-", "MR--"], "Protein", 2, 4)
     assert m.index.tolist() == [2, 3, 4]
-    assert m.sum(axis=1).loc[3] == pytest.approx(math.log2(20), abs=1e-6)
+    # one asparagine among three sequences: information is scaled by the 1/3 non-gap fraction
+    assert m.sum(axis=1).loc[3] == pytest.approx(math.log2(20) / 3, abs=1e-6)
 
 
 def test_logo_dna_ambiguity_column_is_zero():
     m = logo_matrix(["N", "N", "N"], seq_type="DNA")
     assert m.sum(axis=1).iloc[0] == 0
+
+
+def test_logo_mostly_gap_column_is_scaled_by_non_gap_fraction():
+    m = logo_matrix(["M-", "-K", "-K", "-K", "-K", "-K"])
+    assert m.sum(axis=1).iloc[0] == pytest.approx(math.log2(20) / 6, abs=1e-6)
+    assert m.sum(axis=1).iloc[1] == pytest.approx(math.log2(20) * 5 / 6, abs=1e-6)
+    full = logo_matrix(["M", "M", "M", "M", "M", "M"])
+    assert full.sum(axis=1).iloc[0] == pytest.approx(math.log2(20), abs=1e-6)
