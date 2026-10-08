@@ -65,7 +65,7 @@ def test_tree_to_newick_roundtrip():
     assert sorted(t.name for t in Phylo.read(StringIO(text), "newick").get_terminals()) == ["A", "B", "C"]
 
 
-from modules.phylogeny import bootstrap_tree, tree_figure, tree_layout, tree_splits
+from modules.phylogeny import bootstrap_tree, tree_splits
 
 GROUPED = [("a", "A" * 19 + "C"), ("b", "A" * 20), ("c", "T" * 19 + "G"), ("d", "T" * 20)]
 
@@ -91,16 +91,6 @@ def test_tree_splits_rooting_invariant():
     assert tree_splits(t1, names, "a") == tree_splits(t2, names, "a") == {frozenset("cd")}
 
 
-def test_tree_figure_has_all_leaves():
-    from io import StringIO
-    from Bio import Phylo
-    tree = Phylo.read(StringIO("((A:0.1,B:0.2):0.3,C:0.5);"), "newick")
-    segments, leaves, _ = tree_layout(tree)
-    assert sorted(name for _, _, name in leaves) == ["A", "B", "C"]
-    fig = tree_figure(tree)
-    assert sorted(fig.data[1].text) == ["A", "B", "C"]
-
-
 def test_bootstrap_tree_empty_alignment_returns_tree():
     tree = bootstrap_tree([("a", ""), ("b", ""), ("c", "")], "DNA", replicates=10)
     assert sorted(t.name for t in tree.get_terminals()) == ["a", "b", "c"]
@@ -124,3 +114,91 @@ def test_bootstrap_supports_survive_newick_round_trip():
     for clade in back.get_nonterminals():
         assert clade.name is None
     assert all(isinstance(c.confidence, (int, float)) for c in inner)
+
+
+import itertools
+import textwrap
+from pathlib import Path
+
+from streamlit.testing.v1 import AppTest
+
+ROOT = Path(__file__).resolve().parents[1]
+GLOBIN_NEWICK = ("(('sp|P69905|HBA_HUMAN':0.02,'sp|P01942|HBA_MOUSE':0.06)100:0.3,((HBB_HUMAN:0.01,"
+                 "'HBB GORGO':0.014)100:0.07,(HBB_MOUSE:0.05,HBB_HORSE:0.08)72:0.03)99:0.28,MYG_HUMAN:0.6);")
+
+
+def tree_page(tmp_path, newick=GLOBIN_NEWICK):
+    script = tmp_path / "tree_page.py"
+    script.write_text(textwrap.dedent(f"""
+        import sys
+        sys.path.insert(0, {str(ROOT)!r})
+        from io import StringIO
+        from Bio import Phylo
+        from modules.phylogeny import phylogenetic_tree_section
+        phylogenetic_tree_section(Phylo.read(StringIO({newick!r}), "newick"), "t")
+    """))
+    at = AppTest.from_file(str(script), default_timeout=120)
+    at.run()
+    assert not at.exception, at.exception
+    return at
+
+
+def control(at, key):
+    return next(w for w in at.get("button_group") if w.key == key)
+
+
+def test_tree_section_every_layout_and_style(tmp_path):
+    at = tree_page(tmp_path)
+    for layout, style in itertools.product(["Rectangular", "Circular", "Unrooted"],
+                                           ["Classic ink", "Support dots", "Clade colour"]):
+        control(at, "t_layout").set_value(layout).run()
+        control(at, "t_style").set_value(style).run()
+        assert not at.exception, (layout, style, at.exception)
+        assert [d.label for d in at.get("download_button")] == ["SVG", "PDF", "PNG (600 dpi)", "Newick"]
+
+
+def test_tree_section_outgroup_and_fallback(tmp_path):
+    at = tree_page(tmp_path)
+    at.selectbox(key="t_rooting").set_value("Outgroup").run()
+    at.multiselect(key="t_outgroup").set_value(["MYG_HUMAN"]).run()
+    assert not at.exception and not at.warning
+    at.multiselect(key="t_outgroup").set_value([]).run()
+    assert not at.exception
+    assert any("midpoint rooting instead" in w.value for w in at.warning)
+
+
+def test_tree_section_explore_view(tmp_path):
+    at = tree_page(tmp_path)
+    control(at, "t_view").set_value("Explore").run()
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 1
+
+
+def _style_items():
+    from dataclasses import asdict
+    from modules.tree_render import TreeStyle
+    return tuple((k, tuple(v) if isinstance(v, list) else v) for k, v in asdict(TreeStyle()).items())
+
+
+def test_tree_outputs_keep_odd_leaf_names():
+    # Review Focus 1: names with |, spaces and quotes survive the Newick round trip in the cached renderer
+    from modules.phylogeny import tree_figure_outputs
+    out = tree_figure_outputs(GLOBIN_NEWICK, "rectangular", False, "midpoint", (), True, 1, _style_items())
+    shown = {t.hover for t in out["drawing"].texts if t.kind == "leaf"}
+    assert {"sp|P69905|HBA_HUMAN", "HBB GORGO", "MYG_HUMAN"} <= shown
+    assert out["svg"].lstrip().startswith(b"<?xml") and out["pdf"].startswith(b"%PDF")
+    assert out["preview"].startswith(b"\x89PNG")
+
+
+def test_tree_outputs_handle_deep_caterpillar_tree():
+    from Bio.Phylo.BaseTree import Clade, Tree
+    from modules.phylogeny import tree_figure_outputs, tree_to_newick
+    from modules.tree_layout import recursion_headroom
+    node = Clade(branch_length=0.1, name="L0")
+    for i in range(1, 300):
+        node = Clade(branch_length=0.1, clades=[node, Clade(branch_length=0.1, name=f"L{i}")])
+    tree = Tree(root=node, rooted=True)
+    with recursion_headroom(tree):
+        newick = tree_to_newick(tree)
+    out = tree_figure_outputs(newick, "rectangular", False, "as_built", (), False, 3, _style_items())
+    assert sum(t.kind == "leaf" for t in out["drawing"].texts) == 300

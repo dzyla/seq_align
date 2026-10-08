@@ -236,3 +236,11 @@ def test_similarity_matrix_colour_range_controls():
     next(w for w in at.get("button_group") if w.key == "sim_range").set_value("Fixed 0–1").run()
     assert not at.exception
     assert any("0.000–1.000" in c.value for c in at.caption)
+
+
+def test_tree_page_shows_figure_downloads():
+    at = load(FASTA_A)
+    at.selectbox(key="analysis_select").select("Phylogenetic Tree").run()
+    at.button(key="build_tree").click().run()
+    assert not at.exception
+    assert "SVG" in [d.label for d in at.get("download_button")]

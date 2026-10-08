@@ -1,9 +1,8 @@
 import math
 from collections import Counter
 
-import matplotlib.pyplot as plt
 import numpy as np
-import plotly.graph_objects as go
+import pandas as pd
 import streamlit as st
 from Bio import Phylo
 from Bio.Phylo.TreeConstruction import DistanceMatrix, DistanceTreeConstructor
@@ -20,74 +19,118 @@ class TreeError(RuntimeError):
     """Raised when a tree cannot be built."""
 
 
-def phylogenetic_tree_section(tree):
-    """
-    Handles the phylogenetic tree visualization workflow.
-    """
-    st.header("🌳 Phylogenetic Tree")
-    st.info("This section visualizes the phylogenetic tree and provides the Newick format for download.")
+LAYOUT_OPTIONS = {"Rectangular": "rectangular", "Circular": "circular", "Unrooted": "unrooted"}
+ROOTING_OPTIONS = {"Midpoint": "midpoint", "Outgroup": "outgroup", "As built": "as_built"}
+
+
+@st.cache_data(max_entries=16, show_spinner=False)
+def tree_figure_outputs(newick, layout, cladogram, rooting, outgroup, ladderize, n_clades, style_items):
+    """Rooted tree, Drawing, 150-dpi preview PNG, SVG and PDF for one set of figure settings (cached)."""
+    from modules.tree_layout import assign_clades, compute_geometry, prepare_tree, recursion_headroom
+    from modules.tree_render import TreeStyle, export_bytes, place, render_matplotlib
+
+    style = TreeStyle(**{k: list(v) if k == "clade_names" else v for k, v in style_items})
+    tree = Phylo.read(StringIO(newick), "newick")
+    with recursion_headroom(tree):
+        tree = prepare_tree(tree, rooting, outgroup, ladderize)
+        geometry = compute_geometry(tree, layout, cladogram, assign_clades(tree, n_clades))
+        drawing = place(geometry, style)
+        fig = render_matplotlib(drawing)
+        preview = BytesIO()
+        fig.savefig(preview, format="png", dpi=150, facecolor="white")
+        return {"drawing": drawing, "preview": preview.getvalue(), "svg": export_bytes(fig, "svg"),
+                "pdf": export_bytes(fig, "pdf"), "newick": tree_to_newick(tree)}
+
+
+def _png_600(drawing):
+    from modules.tree_render import export_bytes, render_matplotlib
+    return export_bytes(render_matplotlib(drawing), "png")
+
+
+def phylogenetic_tree_section(tree, key_prefix="tree"):
+    """Publication tree figure: layout, style, rooting and label settings, a Figure/Explore view and
+    SVG/PDF/PNG/Newick downloads. `key_prefix` keeps settings separate per page."""
+    from dataclasses import asdict
+    from modules.tree_layout import recursion_headroom
+    from modules.tree_render import FONTS, STYLES, TreeStyle, render_plotly
+    from modules.ui import show_plotly, theme_type
 
     if not tree:
         st.warning("No phylogenetic tree to display.")
         return
+    key = lambda name: f"{key_prefix}_{name}"
+    with recursion_headroom(tree):
+        leaves = [t.name for t in tree.get_terminals()]
+        newick_in = tree_to_newick(tree)
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        layout = c1.segmented_control("Layout", list(LAYOUT_OPTIONS), default="Rectangular", required=True,
+                                      key=key("layout"))
+        style_label = c2.segmented_control("Style", list(STYLES), default="Classic ink", required=True,
+                                           key=key("style"))
+        c1, c2, c3 = st.columns(3)
+        rooting = c1.selectbox("Rooting", list(ROOTING_OPTIONS), key=key("rooting"))
+        cladogram = c2.toggle("Cladogram", key=key("cladogram"), disabled=layout == "Unrooted",
+                              help="Ignore branch lengths and align the tips.")
+        ladderize = c3.toggle("Ladderize", value=True, key=key("ladderize"))
+        outgroup = []
+        if rooting == "Outgroup":
+            outgroup = st.multiselect("Outgroup leaves", leaves, key=key("outgroup"))
+        n_clades, clade_names = 1, []
+        if STYLES[style_label] == "clades":
+            c1, c2 = st.columns([1, 2])
+            n_clades = c1.slider("Clades", 2, max(2, min(12, len(leaves))), min(3, len(leaves)),
+                                 key=key("clades"))
+            table = c2.data_editor(pd.DataFrame({"Clade name": [f"Clade {i + 1}" for i in range(n_clades)]}),
+                                   hide_index=True, width="stretch", key=key(f"clade_names_{n_clades}"))
+            clade_names = table["Clade name"].fillna("").astype(str).tolist()
+        support_min = st.slider("Show support ≥", 0, 100, 50, key=key("support"))
+        with st.expander("Labels and size"):
+            c1, c2, c3 = st.columns(3)
+            font = c1.selectbox("Font", list(FONTS), key=key("font"))
+            font_size = c1.slider("Font size (pt)", 5, 16, 9, key=key("font_size"))
+            line_width = c1.slider("Line width (pt)", 0.5, 3.0, 1.0, 0.25, key=key("line_width"))
+            italic = c2.toggle("Italic labels", value=True, key=key("italic"))
+            spaces = c2.toggle("Underscores as spaces", value=True, key=key("spaces"))
+            truncate = c2.number_input("Truncate names at (0 = off)", 0, 60, 0, key=key("truncate"))
+            width_cm = c3.slider("Width (cm)", 8.0, 40.0, 16.0, 0.5, key=key("width"))
+            height_cm = None
+            if layout == "Rectangular" and not c3.toggle("Automatic height", value=True, key=key("auto_height")):
+                height_cm = c3.slider("Height (cm)", 4.0, 120.0, 20.0, 0.5, key=key("height"))
 
-    # Visualization
-    st.subheader("📊 Tree Visualization")
-
-    view = st.radio("View", ("Interactive", "Static (Matplotlib)"), horizontal=True, key="tree_view")
-    if view == "Interactive":
-        st.plotly_chart(tree_figure(tree), width="stretch")
-    else:
-        # Calculate reasonable default height based on number of terminals (leaves)
-        terminals = tree.get_terminals()
-        default_height = max(8, len(terminals) * 0.2)
-
-        with st.expander("Tree Display Settings"):
-            col_set1, col_set2 = st.columns(2)
-            with col_set1:
-                tree_height = st.number_input("Tree Height", value=float(default_height), min_value=5.0, help="Increase this if labels are overlapping vertically.")
-                tree_width = st.number_input("Tree Width", value=12.0, min_value=5.0, help="Width of the plot.")
-            with col_set2:
-                font_size = st.slider("Font Size", 6, 20, 10, help="Font size for labels.")
-                show_labels = st.checkbox("Show Labels", value=True)
-                show_inner_labels = st.checkbox("Show Inner Node Labels", value=False, help="Show labels for internal nodes (e.g., bootstrap values or node names).")
-
-        with plt.rc_context({'font.size': font_size}):
-            fig, ax = plt.subplots(figsize=(tree_width, tree_height))
+    style = TreeStyle(style=STYLES[style_label], support_min=float(support_min), font_family=font,
+                      font_size=float(font_size), italic=italic, underscores_to_spaces=spaces,
+                      truncate=int(truncate), line_width=float(line_width), width_cm=float(width_cm),
+                      height_cm=height_cm, clade_names=clade_names)
+    style_items = tuple((k, tuple(v) if isinstance(v, list) else v) for k, v in asdict(style).items())
+    args = (newick_in, LAYOUT_OPTIONS[layout], cladogram and layout != "Unrooted")
+    with st.spinner("Drawing tree..."):
         try:
-            def label_func(node):
-                if node.is_terminal():
-                    return str(node) if show_labels else ''
-                return str(node) if show_inner_labels else ''
+            out = tree_figure_outputs(*args, ROOTING_OPTIONS[rooting], tuple(outgroup), ladderize, n_clades,
+                                      style_items)
+        except TreeError as e:
+            st.warning(f"{e} Using midpoint rooting instead.")
+            out = tree_figure_outputs(*args, "midpoint", (), ladderize, n_clades, style_items)
+    if out["drawing"].warning:
+        st.warning(out["drawing"].warning)
 
-            with plt.rc_context({'font.size': font_size}):
-                Phylo.draw(tree, axes=ax, do_show=False, show_confidence=True, label_func=label_func)
-            ax.set_title("Phylogenetic Tree", fontsize=16)
-            for side in ('top', 'right', 'left'):
-                ax.spines[side].set_visible(False)
-            ax.get_yaxis().set_visible(False)
-            st.pyplot(fig)
+    view = st.segmented_control("View", ["Figure", "Explore"], default="Figure", required=True, key=key("view"),
+                                help="Figure is exactly what you download. Explore adds hover and zoom.")
+    if view == "Figure":
+        st.image(out["preview"])
+    else:
+        show_plotly(render_plotly(out["drawing"], dark=theme_type() == "dark"), width="stretch")
 
-            buf = BytesIO()
-            fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-            buf.seek(0)
-            st.download_button(label="📥 Download Tree Image (PNG)", data=buf,
-                               file_name="phylogenetic_tree.png", mime="image/png", on_click="ignore")
-        except Exception as e:
-            st.error(f"Could not draw the tree graphically: {e}")
-            st.info("Displaying ASCII version of the tree instead.")
-            tree_io = StringIO()
-            Phylo.draw_ascii(tree, out=tree_io)
-            st.code(tree_io.getvalue())
-        finally:
-            plt.close(fig)
-
-    # Newick format
-    st.subheader("📄 Newick Format")
-    newick = tree_to_newick(tree)
-    st.code(newick)
-    st.download_button(label="📥 Download Newick File", data=newick, file_name="phylogenetic_tree.nwk",
-                       mime="text/plain", on_click="ignore")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.download_button("SVG", out["svg"], "phylogenetic_tree.svg", "image/svg+xml", icon=":material/download:",
+                       on_click="ignore", width="stretch", key=key("dl_svg"))
+    c2.download_button("PDF", out["pdf"], "phylogenetic_tree.pdf", "application/pdf",
+                       icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_pdf"))
+    c3.download_button("PNG (600 dpi)", lambda: _png_600(out["drawing"]), "phylogenetic_tree.png", "image/png",
+                       icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_png"))
+    c4.download_button("Newick", out["newick"], "phylogenetic_tree.nwk", "text/plain",
+                       icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_nwk"),
+                       help="The tree as rooted and ladderized above.")
 
 
 def tree_to_newick(tree):
@@ -238,52 +281,3 @@ def bootstrap_tree(aligned_pairs, seq_type, method="nj", correction=True, replic
         raise
     except Exception as e:
         raise TreeError(f"Bootstrap tree failed: {e}") from e
-
-
-def tree_layout(tree):
-    """Rectangular layout: (segments [(x0,y0,x1,y1)], leaves [(x,y,name)], internals [(x,y,confidence)])."""
-    has_lengths = any(c.branch_length for c in tree.find_clades())
-    depths = tree.depths(unit_branch_lengths=not has_lengths)
-    terminals = tree.get_terminals()
-    y = {t: i for i, t in enumerate(terminals)}
-
-    def assign(clade):
-        if clade not in y:
-            ys = [assign(c) for c in clade.clades]
-            y[clade] = (min(ys) + max(ys)) / 2
-        return y[clade]
-
-    assign(tree.root)
-    segments, internals = [], []
-    for clade in tree.find_clades(order="preorder"):
-        for child in clade.clades:
-            segments.append((depths[clade], y[child], depths[child], y[child]))
-        if clade.clades:
-            ys = [y[c] for c in clade.clades]
-            segments.append((depths[clade], min(ys), depths[clade], max(ys)))
-            internals.append((depths[clade], y[clade], clade.confidence))
-    leaves = [(depths[t], y[t], t.name) for t in terminals]
-    return segments, leaves, internals
-
-
-def tree_figure(tree):
-    segments, leaves, internals = tree_layout(tree)
-    xs, ys = [], []
-    for x0, y0, x1, y1 in segments:
-        xs += [x0, x1, None]
-        ys += [y0, y1, None]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#555555", width=1.5), hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=[l[0] for l in leaves], y=[l[1] for l in leaves], mode="markers+text",
-                             text=[l[2] for l in leaves], textposition="middle right",
-                             marker=dict(size=6, color="#4e79a7"), hovertemplate="%{text}<extra></extra>"))
-    labelled = [(x, yy, c) for x, yy, c in internals if c is not None]
-    if labelled:
-        fig.add_trace(go.Scatter(x=[p[0] for p in labelled], y=[p[1] for p in labelled], mode="text",
-                                 text=[str(int(p[2])) for p in labelled], textposition="top left",
-                                 textfont=dict(size=10, color="#d62728"), hoverinfo="skip"))
-    max_x = max([l[0] for l in leaves] + [0.0])
-    fig.update_layout(showlegend=False, height=max(300, 22 * len(leaves) + 80), plot_bgcolor="white",
-                      xaxis=dict(title="Branch length", range=[0, max_x * 1.35 or 1]),
-                      yaxis=dict(visible=False, autorange="reversed"), margin=dict(l=20, r=20, t=30, b=40))
-    return fig

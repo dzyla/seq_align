@@ -282,7 +282,7 @@ def msa_section(sequences, seq_type):
             if stored["params"] != tree_params:
                 stale_notice()
             else:
-                phylogenetic_tree_section(stored["tree"])
+                phylogenetic_tree_section(stored["tree"], key_prefix="msa_tree")
 
 
 class MSAError(RuntimeError):

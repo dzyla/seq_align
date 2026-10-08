@@ -22,6 +22,7 @@ from modules.pdb_renumber import pdb_renumber_section
 from modules.properties import sequence_properties_section
 from modules.structure_view import structure_viewer_section
 from modules.phylogeny import TREE_METHODS, TreeError, build_phylogenetic_tree, phylogenetic_tree_section
+from modules.ui import page_header
 from modules.overview import EXAMPLES, load_example_callback, show_dataset_overview
 from modules.seqtools import detect_seq_type, fingerprint
 from modules.structures import STRUCTURE_FORMATS, StructureFile
@@ -206,7 +207,8 @@ Mutation positions are always reported in reference-sequence coordinates.
     sequences, tree = handle_input(input_format)
 
     if tree is not None:
-        phylogenetic_tree_section(tree)
+        page_header("Phylogenetic tree", "Your uploaded Newick tree, ready to style and export.")
+        phylogenetic_tree_section(tree, key_prefix="newick")
         return
     if not sequences:
         st.info("Please upload sequences or a Newick tree in the sidebar to begin.")
@@ -261,6 +263,7 @@ Mutation positions are always reported in reference-sequence coordinates.
     elif alignment_mode == "PDB Residue Renumbering":
         pdb_renumber_section(structures)
     elif alignment_mode == "Phylogenetic Tree":
+        page_header("Phylogenetic tree", "Distance tree from pairwise alignments, drawn for publication.")
         c_m, c_c = st.columns(2)
         tree_method = c_m.selectbox("Tree method", list(TREE_METHODS))
         correction = c_c.checkbox("Correct for multiple substitutions", value=True,
@@ -280,7 +283,7 @@ Mutation positions are always reported in reference-sequence coordinates.
             if stored["params"] != params:
                 stale_notice()
             else:
-                phylogenetic_tree_section(stored["tree"])
+                phylogenetic_tree_section(stored["tree"], key_prefix="tree")
 
     if has_results(st.session_state):
         st.sidebar.divider()
