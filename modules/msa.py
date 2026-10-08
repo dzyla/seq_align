@@ -26,7 +26,8 @@ from modules.structure_view import (
     map_sequence_to_structure, rank_chains, render_molstar, structure_highlight_panel,
 )
 from modules.variants import variant_matrix, variants_long
-from modules.phylogeny import TREE_METHODS, TreeError, build_tree_from_alignment, phylogenetic_tree_section
+from modules.phylogeny import (
+    TREE_METHODS, TreeError, bootstrap_tree, build_tree_from_alignment, phylogenetic_tree_section)
 
 def msa_section(sequences, seq_type):
     """Multiple Sequence Alignment workflow. The alignment is computed once per dataset."""
@@ -250,18 +251,23 @@ def msa_section(sequences, seq_type):
         tree_method = c_m.selectbox("Tree method", list(TREE_METHODS), key="msa_tree_method")
         correction = c_c.checkbox("Correct for multiple substitutions", value=True, key="msa_tree_corr",
                                   help="Jukes–Cantor (DNA) or Kimura (protein) distance correction.")
+        replicates = st.number_input("Bootstrap replicates", 0, 1000, 0, 50, key="msa_bootstrap",
+                                     help="0 = no bootstrap. 100 is a common choice.")
+        tree_params = {"method": tree_method, "correction": correction, "replicates": replicates}
         if st.button("Calculate Phylogenetic Tree from MSA"):
             with st.spinner("Building tree from MSA..."):
                 try:
-                    tree = build_tree_from_alignment(
-                        aligned_to_msa(view), seq_type, TREE_METHODS[tree_method], correction)
-                    st.session_state.msa_tree = {
-                        "params": {"method": tree_method, "correction": correction}, "tree": tree}
+                    if replicates > 0:
+                        tree = bootstrap_tree(view, seq_type, TREE_METHODS[tree_method], correction, replicates)
+                    else:
+                        tree = build_tree_from_alignment(
+                            aligned_to_msa(view), seq_type, TREE_METHODS[tree_method], correction)
+                    st.session_state.msa_tree = {"params": tree_params, "tree": tree}
                 except TreeError as e:
                     st.error(str(e))
         stored = st.session_state.get('msa_tree')
         if stored:
-            if stored["params"] != {"method": tree_method, "correction": correction}:
+            if stored["params"] != tree_params:
                 stale_notice()
             else:
                 phylogenetic_tree_section(stored["tree"])

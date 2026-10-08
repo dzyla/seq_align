@@ -63,3 +63,39 @@ def test_tree_to_newick_roundtrip():
     tree = Phylo.read(StringIO("((A:0.1,B:0.2):0.3,C:0.5);"), "newick")
     text = tree_to_newick(tree)
     assert sorted(t.name for t in Phylo.read(StringIO(text), "newick").get_terminals()) == ["A", "B", "C"]
+
+
+from modules.phylogeny import bootstrap_tree, tree_figure, tree_layout, tree_splits
+
+GROUPED = [("a", "A" * 19 + "C"), ("b", "A" * 20), ("c", "T" * 19 + "G"), ("d", "T" * 20)]
+
+
+def test_vectorized_distance_matches_definition():
+    d = alignment_distance_matrix(["AC-T", "AGGT", "TC-T"], "DNA", correction=False)
+    assert d[0, 1] == pytest.approx(1 / 3)
+    assert d[0, 2] == pytest.approx(1 / 3)
+
+
+def test_bootstrap_supports_true_split():
+    tree = bootstrap_tree(GROUPED, "DNA", method="nj", correction=False, replicates=50, seed=1)
+    supports = [c.confidence for c in tree.get_nonterminals() if c.confidence is not None]
+    assert 100 in supports
+
+
+def test_tree_splits_rooting_invariant():
+    from io import StringIO
+    from Bio import Phylo
+    t1 = Phylo.read(StringIO("((a,b),(c,d));"), "newick")
+    t2 = Phylo.read(StringIO("(a,(b,(c,d)));"), "newick")
+    names = frozenset("abcd")
+    assert tree_splits(t1, names, "a") == tree_splits(t2, names, "a") == {frozenset("cd")}
+
+
+def test_tree_figure_has_all_leaves():
+    from io import StringIO
+    from Bio import Phylo
+    tree = Phylo.read(StringIO("((A:0.1,B:0.2):0.3,C:0.5);"), "newick")
+    segments, leaves, _ = tree_layout(tree)
+    assert sorted(name for _, _, name in leaves) == ["A", "B", "C"]
+    fig = tree_figure(tree)
+    assert sorted(fig.data[1].text) == ["A", "B", "C"]
