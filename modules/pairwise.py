@@ -3,16 +3,18 @@ import plotly.graph_objects as go
 import pandas as pd
 from Bio import Align
 from Bio.Align import substitution_matrices
-from Bio.Seq import Seq
 from io import StringIO
-import traceback
+import logging
 import re
 from modules.utils import have_params_changed
 from modules.seqtools import clean_sequence
 from functools import lru_cache
+from dataclasses import dataclass, field
 
 DEFAULT_OPEN_GAP = -10.0
 DEFAULT_EXTEND_GAP = -0.5
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=None)
@@ -99,12 +101,8 @@ def pairwise_alignment_section(sequences, seq_type):
 
     if selection_changed:
         # Reset alignment results when selection changes
-        if 'alignment_text' in st.session_state:
-            st.session_state.alignment_text = None
-            st.session_state.pairwise_mutations = None
-        # Reset the parameters tracking
-        if 'last_pairwise_params' in st.session_state:
-            st.session_state.last_pairwise_params = {}
+        st.session_state.pairwise_result = None
+        st.session_state.last_pairwise_params = {}
         st.session_state.last_selected_seqs = (reference_id, target_id)
 
     c1, c2 = st.columns(2)
@@ -146,167 +144,70 @@ def pairwise_alignment_section(sequences, seq_type):
 
     run_alignment = st.button("Run Pairwise Alignment")
 
-    # Perform alignment if button is clicked or if we have results and parameters haven't changed
-    if run_alignment or (st.session_state.get('alignment_text') is not None and not params_changed):
-        # Only recalculate if parameters changed or explicitly requested
-        if run_alignment or params_changed:
-            with st.spinner("Performing pairwise alignment..."):
-                alignment_text, mutations = perform_pairwise_alignment(
+    if run_alignment:
+        with st.spinner("Performing pairwise alignment..."):
+            try:
+                st.session_state.pairwise_result = align_pair(
                     seq1, seq2, seq_type, align_mode.lower(), open_gap_score, extend_gap_score,
                     is_circular_ref, is_circular_target
                 )
-                st.session_state.alignment_text = alignment_text
-                st.session_state.pairwise_mutations = mutations
                 st.session_state.last_pairwise_params = current_params
+            except AlignmentError as e:
+                st.session_state.pairwise_result = None
+                st.session_state.last_pairwise_params = {}
+                st.error(str(e))
+                return
 
-        st.subheader("🧬 Alignment Result")
-        st.code(st.session_state.alignment_text)
+    result = st.session_state.get('pairwise_result')
+    if result is None or (params_changed and not run_alignment):
+        return
 
-        st.subheader("🔍 Point Mutations Relative to Reference")
-        if st.session_state.pairwise_mutations:
-            st.write(f"**Reference Sequence:** `{reference_id}`")
-            st.write(f"**Target Sequence:** `{target_id}`")
-            mutations_str = ', '.join(st.session_state.pairwise_mutations)
-            st.write(f"**Mutations:** {mutations_str}")
+    alignment_text = format_result_text(result)
+    st.subheader("🧬 Alignment Result")
+    st.code(alignment_text)
 
-            mutation_positions = []
-            mutation_labels = []
-            for mut in st.session_state.pairwise_mutations:
-                pos = ''.join(filter(str.isdigit, mut))
-                mutation_positions.append(int(pos))
-                mutation_labels.append(mut)
+    st.subheader("🔍 Point Mutations Relative to Reference")
+    if result.mutations:
+        st.write(f"**Reference Sequence:** `{reference_id}`")
+        st.write(f"**Target Sequence:** `{target_id}`")
+        st.write(f"**Mutations:** {', '.join(result.mutations)}")
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=mutation_positions,
-                y=[1]*len(mutation_positions),
-                mode='markers',
-                marker=dict(size=10, color='red'),
-                text=mutation_labels,
-                hoverinfo='text'
-            ))
-            fig.update_layout(
-                title="Point Mutations Plot",
-                xaxis_title="Position in Reference Sequence",
-                yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                height=300,
-                showlegend=False
-            )
-            st.plotly_chart(fig, width="stretch")
-
-            csv_mutations = convert_mutations_to_csv(st.session_state.pairwise_mutations)
-            if csv_mutations:
-                st.download_button(
-                    label="📥 Download Mutations (CSV)",
-                    data=csv_mutations,
-                    file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv",
-                    mime="text/csv"
-                )
-        else:
-            st.write("No point mutations detected.")
-
-        st.download_button(
-            label="📥 Download Alignment",
-            data=st.session_state.alignment_text,
-            file_name=f"pairwise_alignment_{reference_id}_vs_{target_id}.txt",
-            mime="text/plain"
+        mutation_positions = [int(re.search(r"\d+", mut).group()) for mut in result.mutations]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=mutation_positions,
+            y=[1] * len(mutation_positions),
+            mode='markers',
+            marker=dict(size=10, color='red'),
+            text=result.mutations,
+            hoverinfo='text'
+        ))
+        fig.update_layout(
+            title="Point Mutations Plot",
+            xaxis_title="Position in Reference Sequence",
+            yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+            height=300,
+            showlegend=False
         )
+        st.plotly_chart(fig, width="stretch")
 
-def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP, extend_gap_score=DEFAULT_EXTEND_GAP, is_circular1=False, is_circular2=False):
-    """
-    Perform pairwise alignment using Biopython's Align.PairwiseAligner.
+        csv_mutations = convert_mutations_to_csv(result.mutations)
+        if csv_mutations:
+            st.download_button(
+                label="📥 Download Mutations (CSV)",
+                data=csv_mutations,
+                file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv",
+                mime="text/csv"
+            )
+    else:
+        st.write("No point mutations detected.")
 
-    Parameters:
-        seq1: First sequence record
-        seq2: Second sequence record
-        seq_type (str): Type of sequences ('DNA' or 'Protein')
-        mode (str): Alignment mode ('global', 'local', or 'overlap')
-        open_gap_score (float): Score for opening a gap
-        extend_gap_score (float): Score for extending a gap
-        is_circular1 (bool): Whether the first sequence is circular
-        is_circular2 (bool): Whether the second sequence is circular
-
-    Returns:
-        tuple: (alignment_text, mutations) - Formatted alignment text and list of mutations
-    """
-    try:
-        seq1_str = clean_sequence(seq1.seq, seq_type)
-        seq2_str = clean_sequence(seq2.seq, seq_type)
-
-        if not seq1_str or not seq2_str:
-             return "One or both sequences are empty after cleaning.", []
-
-        circular_msg = ""
-        # Optimize starting positions for circular sequences
-        if is_circular1 or is_circular2:
-
-            # Use local alignment to find best starting points
-            opt_aligner = get_aligner(seq_type, "local", open_gap_score, extend_gap_score)
-
-            s1_opt = seq1_str + seq1_str if is_circular1 else seq1_str
-            s2_opt = seq2_str + seq2_str if is_circular2 else seq2_str
-
-            opt_alignments = opt_aligner.align(Seq(s1_opt), Seq(s2_opt))
-            try:
-                opt_aln = next(opt_alignments)
-                seq1_start = opt_aln.aligned[0][0][0]
-                seq2_start = opt_aln.aligned[1][0][0]
-
-                rot1 = 0
-                rot2 = 0
-
-                if is_circular1 and is_circular2:
-                    rot2 = (seq2_start - seq1_start) % len(seq2_str)
-                elif is_circular1:
-                    rot1 = (seq1_start - seq2_start) % len(seq1_str)
-                elif is_circular2:
-                    rot2 = (seq2_start - seq1_start) % len(seq2_str)
-
-                if rot1 > 0:
-                    seq1_str = seq1_str[int(rot1):] + seq1_str[:int(rot1)]
-                    circular_msg += f"\nNote: Reference sequence was circularly shifted by {int(rot1)} positions to optimize alignment."
-                if rot2 > 0:
-                    seq2_str = seq2_str[int(rot2):] + seq2_str[:int(rot2)]
-                    circular_msg += f"\nNote: Target sequence was circularly shifted by {int(rot2)} positions to optimize alignment."
-            except StopIteration:
-                pass
-
-        # Create new Seq objects with the cleaned sequences
-        cleaned_seq1 = Seq(seq1_str)
-        cleaned_seq2 = Seq(seq2_str)
-
-        # Get configured aligner
-        aligner = get_aligner(seq_type, mode, open_gap_score, extend_gap_score)
-
-        # Perform the alignment with cleaned sequences
-        alignments = aligner.align(cleaned_seq1, cleaned_seq2)
-
-        try:
-            alignment = next(alignments)
-        except StopIteration:
-            return "No alignments found. Sequences may be too dissimilar.", []
-
-        # Get the alignment as strings with gaps
-        aligned_seq1_str = str(alignment[0])
-        aligned_seq2_str = str(alignment[1])
-
-        # Generate match line
-        match_line = generate_match_line(aligned_seq1_str, aligned_seq2_str, aligner.substitution_matrix)
-
-        # Report mutations
-        mutations = report_mutations(aligned_seq1_str, aligned_seq2_str)
-
-        # Format alignment display
-        alignment_text = format_alignment_display(seq1.id, aligned_seq1_str, match_line, seq2.id, aligned_seq2_str, alignment.score)
-
-        if circular_msg:
-            alignment_text += "\n" + circular_msg + "\n"
-
-        return alignment_text, mutations
-    except Exception as e:
-        error_msg = f"An error occurred during pairwise alignment: {str(e)}"
-        print(traceback.format_exc())
-        return error_msg, []
+    st.download_button(
+        label="📥 Download Alignment",
+        data=alignment_text,
+        file_name=f"pairwise_alignment_{reference_id}_vs_{target_id}.txt",
+        mime="text/plain"
+    )
 
 def get_aligner(seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP, extend_gap_score=DEFAULT_EXTEND_GAP):
     """
@@ -336,6 +237,118 @@ def get_aligner(seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP, extend
         aligner.mode = mode
 
     return aligner
+
+class AlignmentError(ValueError):
+    """Raised when two sequences cannot be aligned (e.g. empty after cleaning)."""
+
+
+@dataclass
+class PairwiseResult:
+    ref_id: str
+    query_id: str
+    aligned_ref: str
+    aligned_query: str
+    match_line: str
+    score: float
+    ref_start: int          # reference residues before the first aligned column (0 unless local)
+    query_start: int
+    ref_rotation: int       # circular shift applied to the reference (0 if none)
+    ref_length: int
+    mutations: list = field(default_factory=list)
+    notes: list = field(default_factory=list)
+
+
+def _circular_rotations(s1, s2, seq_type, open_gap_score, extend_gap_score, circular1, circular2):
+    """Find rotations that bring the best local match of the two sequences into register."""
+    opt_aligner = get_aligner(seq_type, "local", open_gap_score, extend_gap_score)
+    doubled1 = s1 + s1 if circular1 else s1
+    doubled2 = s2 + s2 if circular2 else s2
+    try:
+        opt_aln = next(iter(opt_aligner.align(doubled1, doubled2)))
+    except StopIteration:
+        return 0, 0
+    start1 = int(opt_aln.coordinates[0][0])
+    start2 = int(opt_aln.coordinates[1][0])
+    if circular2:
+        return 0, (start2 - start1) % len(s2)
+    return (start1 - start2) % len(s1), 0
+
+
+def align_pair(seq1, seq2, seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP,
+               extend_gap_score=DEFAULT_EXTEND_GAP, is_circular1=False, is_circular2=False):
+    """Align two SeqRecords. Mutation positions are always in original reference coordinates."""
+    s1 = clean_sequence(seq1.seq, seq_type)
+    s2 = clean_sequence(seq2.seq, seq_type)
+    if not s1 or not s2:
+        raise AlignmentError("One or both sequences are empty after cleaning.")
+
+    notes = []
+    rot1 = rot2 = 0
+    if is_circular1 or is_circular2:
+        rot1, rot2 = _circular_rotations(s1, s2, seq_type, open_gap_score, extend_gap_score,
+                                         is_circular1, is_circular2)
+        if rot1:
+            s1 = s1[rot1:] + s1[:rot1]
+            notes.append(f"Reference sequence was circularly shifted by {rot1} positions; "
+                         f"reported positions refer to the original reference.")
+        if rot2:
+            s2 = s2[rot2:] + s2[:rot2]
+            notes.append(f"Target sequence was circularly shifted by {rot2} positions to optimize alignment.")
+
+    aligner = get_aligner(seq_type, mode, open_gap_score, extend_gap_score)
+    try:
+        alignment = next(iter(aligner.align(s1, s2)))
+    except StopIteration:
+        raise AlignmentError("No alignment found. Sequences may be too dissimilar.")
+
+    aligned_ref = str(alignment[0])
+    aligned_query = str(alignment[1])
+    ref_start = int(alignment.coordinates[0][0])
+    query_start = int(alignment.coordinates[1][0])
+
+    return PairwiseResult(
+        ref_id=seq1.id,
+        query_id=seq2.id,
+        aligned_ref=aligned_ref,
+        aligned_query=aligned_query,
+        match_line=generate_match_line(aligned_ref, aligned_query, aligner.substitution_matrix),
+        score=float(alignment.score),
+        ref_start=ref_start,
+        query_start=query_start,
+        ref_rotation=rot1,
+        ref_length=len(s1),
+        mutations=report_mutations(aligned_ref, aligned_query, ref_start=ref_start,
+                                   ref_rotation=rot1, ref_length=len(s1)),
+        notes=notes,
+    )
+
+
+def format_result_text(result):
+    """Render a PairwiseResult as the plain-text block shown in the UI and downloads."""
+    text = format_alignment_display(
+        result.ref_id, result.aligned_ref, result.match_line,
+        result.query_id, result.aligned_query, result.score,
+        start1=result.ref_start, start2=result.query_start,
+        rotation1=result.ref_rotation, length1=result.ref_length,
+    )
+    if result.notes:
+        text += "\n" + "\n".join(f"Note: {n}" for n in result.notes) + "\n"
+    return text
+
+
+def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP,
+                               extend_gap_score=DEFAULT_EXTEND_GAP, is_circular1=False, is_circular2=False):
+    """Backward-compatible wrapper around align_pair returning (alignment_text, mutations)."""
+    try:
+        result = align_pair(seq1, seq2, seq_type, mode, open_gap_score, extend_gap_score,
+                            is_circular1, is_circular2)
+    except AlignmentError as e:
+        return str(e), []
+    except Exception as e:
+        logger.exception("Pairwise alignment failed")
+        return f"An error occurred during pairwise alignment: {e}", []
+    return format_result_text(result), result.mutations
+
 
 def calculate_alignment_score(aligner, seq1, seq2, seq_type):
     """
@@ -409,81 +422,59 @@ def are_similar(a, b, substitution_matrix, threshold=1):
         return False
 
 
-def format_alignment_display(id1, aligned1, match_line, id2, aligned2, score, interval=10):
-    """
-    Create a formatted string for alignment display, including match lines and location markers.
+def location_line(aligned_seq, interval=10, start=0, rotation=0, length=None):
+    """Ruler marking every `interval`-th residue in original sequence coordinates."""
+    location = [' '] * len(aligned_seq)
+    count = start
+    for i, char in enumerate(aligned_seq):
+        if char == '-':
+            continue
+        count += 1
+        pos = ((count - 1 + rotation) % length) + 1 if rotation and length else count
+        if pos % interval == 0:
+            mark = str(pos)
+            start_pos = max(0, i - len(mark) + 1)
+            for j, digit in enumerate(mark):
+                k = start_pos + j
+                if k < len(aligned_seq) and location[k] == ' ':
+                    location[k] = digit
+    return ''.join(location)
 
-    Parameters:
-        id1 (str): ID of first sequence
-        aligned1 (str): First aligned sequence with gaps
-        match_line (str): Line showing matches between sequences
-        id2 (str): ID of second sequence
-        aligned2 (str): Second aligned sequence with gaps
-        score (float): Alignment score
-        interval (int): Interval for position markers
 
-    Returns:
-        str: Formatted alignment text
-    """
-    def generate_location_line(aligned_seq, interval=10):
-        location = [' '] * len(aligned_seq)
-        residue_count = 0
-        next_mark = interval
-        for i, char in enumerate(aligned_seq):
-            if char != '-':
-                residue_count += 1
-                if residue_count == next_mark:
-                    mark_str = str(next_mark)
-                    mark_len = len(mark_str)
-                    start_pos = i - mark_len + 1
-                    if start_pos < 0:
-                        start_pos = 0
-                    for j, digit in enumerate(mark_str):
-                        pos = start_pos + j
-                        if pos < len(aligned_seq) and location[pos] == ' ':
-                            location[pos] = digit
-                    next_mark += interval
-        return ''.join(location)
-
+def format_alignment_display(id1, aligned1, match_line, id2, aligned2, score, interval=10,
+                             start1=0, start2=0, rotation1=0, length1=None):
+    """Formatted alignment block with position rulers in original sequence coordinates."""
     max_label_length = max(len(id1), len("Match"), len(id2))
-    id1_padded = id1.ljust(max_label_length)
-    match_padded = "Match".ljust(max_label_length)
-    id2_padded = id2.ljust(max_label_length)
-    location1 = generate_location_line(aligned1, interval)
-    location2 = generate_location_line(aligned2, interval)
     padding = ' ' * (max_label_length + 2)
-    location1_padded = padding + location1
-    location2_padded = padding + location2
-    alignment_text = (
+    return (
         "Pairwise Alignment:\n"
-        f"{location1_padded}\n"
-        f"{id1_padded}: {aligned1}\n"
-        f"{match_padded}: {match_line}\n"
-        f"{id2_padded}: {aligned2}\n"
-        f"{location2_padded}\n"
+        f"{padding}{location_line(aligned1, interval, start1, rotation1, length1)}\n"
+        f"{id1.ljust(max_label_length)}: {aligned1}\n"
+        f"{'Match'.ljust(max_label_length)}: {match_line}\n"
+        f"{id2.ljust(max_label_length)}: {aligned2}\n"
+        f"{padding}{location_line(aligned2, interval, start2)}\n"
         f"{'Score'.ljust(max_label_length)}: {score:.2f}\n"
     )
-    return alignment_text
 
 
-def report_mutations(aligned1, aligned2):
+def report_mutations(aligned1, aligned2, ref_start=0, ref_rotation=0, ref_length=None):
     """
-    Report point mutations between two aligned sequences in the format 'S18I'.
+    Report substitutions between two aligned sequences as e.g. 'S18I'.
 
-    Parameters:
-        aligned1 (str): First aligned sequence with gaps
-        aligned2 (str): Second aligned sequence with gaps
-
-    Returns:
-        list: List of mutation strings (e.g., 'S18I')
+    Positions are in original reference coordinates: `ref_start` is the number of
+    reference residues before the first aligned column (local alignments) and
+    `ref_rotation` undoes a circular shift of the reference.
     """
     mutations = []
-    position = 0
-    for i, (a, b) in enumerate(zip(aligned1, aligned2), start=1):
+    position = ref_start
+    for a, b in zip(aligned1, aligned2):
         if a != '-':
             position += 1
         if a != b and a != '-' and b != '-':
-            mutations.append(f"{a}{position}{b}")
+            pos = position
+            if ref_rotation and ref_length:
+                pos = ((position - 1 + ref_rotation) % ref_length) + 1
+            mutations.append(f"{a}{pos}{b}")
     return mutations
 
 def convert_mutations_to_csv(mutations: list) -> str:

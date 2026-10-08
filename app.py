@@ -163,7 +163,7 @@ def main():
                 # Invalidate results if sequence type changes
                 keys_to_reset = [
                     'msa_result', 'mutations', 'msa_image', 'msa_letters',
-                    'consensus_data', 'alignment_text', 'pairwise_mutations',
+                    'consensus_data', 'pairwise_result',
                     'last_msa_params', 'last_pairwise_params',
                     'best_match_results', 'best_match_params'
                 ]
