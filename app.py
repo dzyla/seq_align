@@ -18,6 +18,7 @@ from modules.parsers import (
     parse_structure_text,
 )
 from modules.pdb_renumber import pdb_renumber_section
+from modules.properties import sequence_properties_section
 from modules.structure_view import structure_viewer_section
 from modules.phylogeny import TREE_METHODS, TreeError, build_phylogenetic_tree, phylogenetic_tree_section
 from modules.overview import EXAMPLES, load_example_callback, show_dataset_overview
@@ -246,6 +247,8 @@ Mutation positions are always reported in reference-sequence coordinates.
         sequence_clustering_section(sequences, seq_type)
     elif alignment_mode == "Antibody Prediction":
         antibody_prediction_section(sequences)
+    elif alignment_mode == "Sequence Properties":
+        sequence_properties_section(sequences)
     elif alignment_mode == "Translate DNA":
         dna_translation_section(sequences)
     elif alignment_mode == "Convert Formats":

@@ -7,7 +7,10 @@ def available_analyses(has_sequences, has_structures, seq_type):
         options.append("Extracted Sequences")
     if has_sequences:
         options += ["Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Phylogenetic Tree"]
-        options.append("Translate DNA" if seq_type == "DNA" else "Antibody Prediction")
+        if seq_type == "DNA":
+            options.append("Translate DNA")
+        else:
+            options += ["Antibody Prediction", "Sequence Properties"]
         options.append("Convert Formats")
     if has_structures:
         options += ["Structure Viewer", "PDB Residue Renumbering"]

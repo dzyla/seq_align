@@ -4,7 +4,7 @@ from modules.navigation import available_analyses
 def test_protein_sequences():
     assert available_analyses(True, False, "Protein") == [
         "Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Phylogenetic Tree",
-        "Antibody Prediction", "Convert Formats",
+        "Antibody Prediction", "Sequence Properties", "Convert Formats",
     ]
 
 
