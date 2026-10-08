@@ -112,7 +112,7 @@ def msa_section(sequences, seq_type):
                 mutated = [s for s in seq_ids if mutations.get(s)]
                 if mutated:
                     show_id = st.selectbox("Sequence to show on structure", mutated, key="msa_3d_seq")
-                    ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein")
+                    ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein").replace("*", "")
                     structure_highlight_panel(
                         ref_seq, {p: ("#d62728", f"{r}{p}{v}") for p, r, v in mutations[show_id]}, key="msa_3d")
         else:
@@ -156,7 +156,7 @@ def msa_section(sequences, seq_type):
         st.line_chart(pd.DataFrame({"Conservation": pd.Series(ref_scores)}), x_label="Reference position",
                       y_label="Conservation")
         if seq_type == "Protein":
-            ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein")
+            ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein").replace("*", "")
             with st.expander("🧊 Conservation on structure (Mol*) and B-factor export"):
                 structures = available_structures()
                 if not structures:
@@ -166,26 +166,30 @@ def msa_section(sequences, seq_type):
                     name = st.selectbox("Structure", list(structures), key="cons_structure")
                     sf = structures[name]
                     table = cached_residue_table(sf.data, sf.fmt, sf.name)
-                    ranked = rank_chains(ref_seq, table)
-                    chain_id = st.selectbox("Chain", [c for c, _ in ranked], key="cons_chain")
-                    pos_map, identity = map_sequence_to_structure(ref_seq, table[chain_id])
-                    highlights, values = [], {}
-                    for pos, score in ref_scores.items():
-                        res = pos_map.get(pos)
-                        if res:
-                            grade = conservation_grade(score)
-                            highlights.append(Highlight(ResidueRef(res.chain, res.number, res.icode),
-                                                        CONSERVATION_COLORS[grade - 1]))
-                            values[(res.chain, res.number, res.icode)] = round(score, 3)
-                    st.caption(f"{len(highlights)} residues colored ({identity:.1%} identity to chain {chain_id}); "
-                               "teal = variable, maroon = conserved.")
-                    render_molstar(sf, build_view_state(sf, list(table), color_mode="uniform",
-                                                        highlights=highlights, show_sticks=False))
-                    ext = "cif" if sf.fmt == "mmCIF" else "pdb"
-                    st.download_button("📥 Download structure with conservation as B-factors",
-                                       data=write_bfactors(sf, values), file_name=f"{sf.stem}_conservation.{ext}",
-                                       mime="text/plain", on_click="ignore",
-                                       help="Open in ChimeraX and use: color bfactor palette ^bluered")
+                    if not table:
+                        st.warning("No protein chains in this structure.")
+                    else:
+                        ranked = rank_chains(ref_seq, table)
+                        chain_id = st.selectbox("Chain", [c for c, _ in ranked], key="cons_chain")
+                        pos_map, identity = map_sequence_to_structure(ref_seq, table[chain_id])
+                        highlights, values = [], {}
+                        for pos, score in ref_scores.items():
+                            res = pos_map.get(pos)
+                            if res:
+                                grade = conservation_grade(score)
+                                highlights.append(Highlight(ResidueRef(res.chain, res.number, res.icode),
+                                                            CONSERVATION_COLORS[grade - 1]))
+                                values[(res.chain, res.number, res.icode)] = round(score, 3)
+                        st.caption(f"{len(highlights)} residues colored ({identity:.1%} identity to chain {chain_id}); "
+                                   "teal = variable, maroon = conserved.")
+                        render_molstar(sf, build_view_state(sf, list(table), color_mode="uniform",
+                                                            highlights=highlights, show_sticks=False))
+                        ext = "cif" if sf.fmt == "mmCIF" else "pdb"
+                        st.download_button("📥 Download structure with conservation as B-factors",
+                                           data=write_bfactors(sf, values), file_name=f"{sf.stem}_conservation.{ext}",
+                                           mime="text/plain", on_click="ignore",
+                                           help="Open in ChimeraX and use: color bfactor palette ^bluered. "
+                                                "Unscored residues (gap-rich columns) and other chains are written as 0.0.")
 
     with tabs[-1]:
         st.subheader("🌳 Phylogenetic Tree from MSA")

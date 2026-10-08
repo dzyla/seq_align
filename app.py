@@ -187,6 +187,9 @@ Align, compare and annotate **DNA** or **protein** sequences and structures.
 3. **Pick an analysis** and adjust its settings.
 4. **Run** it and **download** the results.
 
+Use **Fetch by ID** to pull sequences or structures from UniProt, NCBI, PDB or AlphaFold DB. Structures open in
+the **Structure Viewer** (Mol*), and the **Show on structure** panels map mutations and conservation onto them.
+
 Pairwise alignments support Global, Local and Overlap (free end gaps) modes. MSA uses FAMSA.
 Mutation positions are always reported in reference-sequence coordinates.
 """)

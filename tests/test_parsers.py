@@ -74,3 +74,23 @@ def test_seqres_missing_reports_error():
     text = "ATOM      1  CA  ALA A   1       1.000   0.000   0.000  1.00  0.00           C\nEND\n"
     records, err = parse_structure_text(text, "x.pdb", "PDB", source="seqres")
     assert records is None and "SEQRES" in err
+
+
+def _suffixes(records):
+    return {r.id.rsplit("_", 1)[-1] for r in records}
+
+
+def test_seqres_mmcif_uses_author_chains_and_skips_nucleic_acids():
+    text = (DATA / "1a02.cif").read_text()
+    atom, err = parse_structure_text(text, "1a02.cif", "mmCIF")
+    assert err is None
+    seqres, err = parse_structure_text(text, "1a02.cif", "mmCIF", source="seqres")
+    assert err is None
+    assert _suffixes(seqres) == _suffixes(atom)
+    assert not any(set(str(r.seq)) <= {"X"} for r in seqres)
+
+
+def test_seqres_dna_only_structure_has_no_protein():
+    text = (DATA / "1bna.cif").read_text()
+    records, err = parse_structure_text(text, "1bna.cif", "mmCIF", source="seqres")
+    assert records is None and err

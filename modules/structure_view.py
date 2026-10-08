@@ -6,7 +6,7 @@ import molviewspec as mvs
 import streamlit as st
 from molviewspec import ComponentExpression
 
-from modules.fetch import FetchError, fetch_alphafold_structure, fetch_pdb_structure
+from modules.fetch import FetchError, fetch_alphafold_structure, fetch_pdb_structure, validate_ids
 from modules.pdb_renumber import align_target_to_chain, get_mapping_from_alignment
 from modules.structures import StructureFile, chain_residue_table, parse_structure
 
@@ -108,6 +108,11 @@ def cached_residue_table(data, fmt, name):
     return chain_residue_table(parse_structure(StructureFile(name=name, data=data, fmt=fmt)))
 
 
+def is_predicted_model(sf):
+    """True for AlphaFold-style predictions (pLDDT in the B-factor column)."""
+    return sf.name.startswith("AF-") or b"_ma_qa_metric" in sf.data
+
+
 def structure_viewer_section(structures):
     st.header("🧊 Structure Viewer (Mol*)")
     if not structures:
@@ -123,8 +128,12 @@ def structure_viewer_section(structures):
     else:
         builder = build_view_state(sf, list(table), color_mode="uniform", highlights=bfactor_highlights(table),
                                    show_sticks=False)
-        st.caption(" · ".join(f"<span style='color:{c}'>■</span> {label}" for _, c, label in PLDDT_BINS),
-                   unsafe_allow_html=True)
+        if is_predicted_model(sf):
+            st.caption(" · ".join(f"<span style='color:{c}'>■</span> {label}" for _, c, label in PLDDT_BINS),
+                       unsafe_allow_html=True)
+        else:
+            st.caption("Colored by B-factor using pLDDT bins; for experimental structures high values mean "
+                       "flexible, not confident.")
     render_molstar(sf, builder)
     st.caption(f"{len(table)} protein chain(s): " + ", ".join(f"{c} ({len(r)} residues)" for c, r in table.items()))
 
@@ -168,7 +177,10 @@ def _add_structure_controls(key):
     if c2.button("Fetch structure", key=f"{key}_fetch_btn") and ident.strip():
         ident = ident.strip().upper()
         try:
-            sf = fetch_pdb_structure(ident) if len(ident) == 4 else fetch_alphafold_structure(ident)
+            source = "PDB (structure)" if len(ident) == 4 else "AlphaFold DB (structure)"
+            validate_ids(source, [ident])
+            with st.spinner(f"Fetching {ident}..."):
+                sf = fetch_pdb_structure(ident) if len(ident) == 4 else fetch_alphafold_structure(ident)
             st.session_state.extra_structures = {**st.session_state.get("extra_structures", {}), sf.name: sf}
         except FetchError as e:
             st.error(str(e))

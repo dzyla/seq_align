@@ -57,27 +57,44 @@ def validate_ids(source, ids):
         raise FetchError(f"Not a valid {source} ID: {', '.join(bad)}")
 
 
-def _get(url, what, params=None):
+def _get(url, what, params=None, hints=None):
     try:
         response = requests.get(url, params=params, timeout=TIMEOUT, headers=HEADERS)
     except requests.RequestException as e:
         raise FetchError(f"Network error while fetching {what}: {e}") from e
     if response.status_code == 404:
         raise FetchError(f"{what} not found.")
+    if hints and response.status_code in hints:
+        raise FetchError(f"{what}: {hints[response.status_code]}")
     if response.status_code != 200:
         raise FetchError(f"Fetching {what} failed (HTTP {response.status_code}).")
     return response
 
 
 def fetch_uniprot_fasta(ids):
-    return "".join(_get(f"https://rest.uniprot.org/uniprotkb/{acc}.fasta", f"UniProt {acc}").text for acc in ids)
+    texts = [_get(f"https://rest.uniprot.org/uniprotkb/{acc}.fasta", f"UniProt {acc}").text.rstrip("\n") for acc in ids]
+    return "\n".join(texts) + "\n"
+
+
+def _accession_key(token):
+    return token.split(".")[0].upper()
 
 
 def fetch_ncbi_fasta(ids, db):
     params = {"db": db, "id": ",".join(ids), "rettype": "fasta", "retmode": "text"}
-    text = _get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi", f"NCBI {', '.join(ids)}", params).text
+    hints = {
+        400: "bad request; the database may be wrong (e.g. a nucleotide accession under NCBI Protein).",
+        429: "NCBI rate limit reached; wait a few seconds and try again.",
+    }
+    text = _get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi", f"NCBI {', '.join(ids)}", params,
+                hints).text
     if not text.lstrip().startswith(">"):
         raise FetchError(f"NCBI returned no FASTA for {', '.join(ids)}.")
+    returned = {_accession_key(line[1:].split()[0]) for line in text.splitlines()
+                if line.startswith(">") and line[1:].split()}
+    missing = [i for i in ids if _accession_key(i) not in returned]
+    if missing:
+        raise FetchError(f"NCBI returned no record for: {', '.join(missing)}")
     return text
 
 

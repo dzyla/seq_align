@@ -130,3 +130,18 @@ def test_fetch_pdb_offers_structure_tools(monkeypatch):
     at.button(key="fetch_button").click().run()
     assert not at.exception
     assert "PDB Residue Renumbering" in at.selectbox(key="analysis_select").options
+
+
+def test_conservation_tab_without_protein_chains_warns():
+    import pathlib
+    from modules.structures import StructureFile
+    data = (pathlib.Path(__file__).parent / "data" / "1bna.cif").read_bytes()
+    at = AppTest.from_file("app.py", default_timeout=60)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.session_state["extra_structures"] = {"1bna.cif": StructureFile("1bna.cif", data, "mmCIF")}
+    at.selectbox(key="analysis_select").select("MSA").run()
+    at.button[0].click().run()
+    assert not at.exception
+    assert any("No protein chains" in w.value for w in at.warning)

@@ -2,9 +2,13 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.PDB import PDBParser, MMCIFParser
+from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 from io import StringIO
 import os
 from modules.utils import amino_acid_map
+
+PROTEIN_LETTERS = "ACDEFGHIKLMNPQRSTVWY"
+
 
 def parse_sequences_from_text(text):
     """
@@ -114,13 +118,24 @@ def parse_structure_text(text, name, format_name, all_models=False, source="atom
             return None, f"Unsupported format: {format_name}"
         if source == "seqres":
             seq_format = "pdb-seqres" if format_name == "PDB" else "cif-seqres"
+            author = {}
+            if format_name == "mmCIF":
+                cif = MMCIF2Dict(StringIO(text))
+                asym, strand = cif.get("_pdbx_poly_seq_scheme.asym_id", []), cif.get("_pdbx_poly_seq_scheme.pdb_strand_id", [])
+                if isinstance(asym, str):
+                    asym, strand = [asym], [strand] if isinstance(strand, str) else strand
+                for label, auth in zip(asym, strand):
+                    author.setdefault(label, auth)
             records = []
             for record in SeqIO.parse(StringIO(text), seq_format):
+                if not set(str(record.seq).upper()) & set(PROTEIN_LETTERS):
+                    continue  # nucleic acid or unknown polymer
                 chain = record.annotations.get("chain", "_") or "_"
+                chain = author.get(chain, chain)
                 records.append(SeqRecord(record.seq, id=f"{base}_{chain}",
                                          description=f"SEQRES chain {chain} from {name}"))
             if not records:
-                return None, "No SEQRES records in this file; use the ATOM sequence source instead."
+                return None, "No protein SEQRES records in this file; use the ATOM sequence source instead."
             return make_unique_ids(records), None
         structure = parser.get_structure(base, StringIO(text))
         models = list(structure) if all_models else list(structure)[:1]

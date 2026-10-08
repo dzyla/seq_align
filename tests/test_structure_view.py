@@ -98,3 +98,10 @@ def test_unmapped_positions_reported():
     highlights, unmapped = position_highlights({2: ("#ff0000", "K2R"), 15: ("#ff0000", "A15W")}, pos_map)
     assert unmapped == [2]
     assert highlights[0].residue.number == 9 and highlights[0].label == "A15W"
+
+
+def test_is_predicted_model():
+    from modules.structure_view import is_predicted_model
+    assert not is_predicted_model(CIF_SF)
+    assert is_predicted_model(StructureFile(name="AF-P69905-F1-model_v6.cif", data=b"x", fmt="mmCIF"))
+    assert is_predicted_model(StructureFile(name="m.cif", data=b"loop_\n_ma_qa_metric.id\n", fmt="mmCIF"))

@@ -79,3 +79,31 @@ def test_http_404_raises(monkeypatch):
     install(monkeypatch, {})
     with pytest.raises(FetchError, match="P69905"):
         fetch_any("UniProt", ["P69905"])
+
+
+def test_ncbi_missing_id_reported(monkeypatch):
+    install(monkeypatch, {"https://eutils.ncbi.nlm.nih.gov": FakeResponse(text=">NP_000549.1 x\nMVLS\n")})
+    with pytest.raises(FetchError, match="NP_000518"):
+        fetch_any("NCBI Protein", ["NP_000549.1", "NP_000518.1"])
+
+
+def test_ncbi_version_and_case_insensitive_match(monkeypatch):
+    install(monkeypatch, {"https://eutils.ncbi.nlm.nih.gov": FakeResponse(text=">NP_000549.2 x\nMVLS\n")})
+    assert fetch_any("NCBI Protein", ["NP_000549"]).fasta.startswith(">NP_000549.2")
+
+
+def test_ncbi_rate_limit_and_bad_request(monkeypatch):
+    install(monkeypatch, {"https://eutils.ncbi.nlm.nih.gov": FakeResponse(status=429)})
+    with pytest.raises(FetchError, match="rate limit"):
+        fetch_any("NCBI Protein", ["NP_000549.1"])
+    install(monkeypatch, {"https://eutils.ncbi.nlm.nih.gov": FakeResponse(status=400)})
+    with pytest.raises(FetchError, match="database"):
+        fetch_any("NCBI Protein", ["NP_000549.1"])
+
+
+def test_uniprot_records_not_merged(monkeypatch):
+    install(monkeypatch, {
+        "https://rest.uniprot.org/uniprotkb/P69905.fasta": FakeResponse(text=">a\nMVLS"),
+        "https://rest.uniprot.org/uniprotkb/P68871.fasta": FakeResponse(text=">b\nMVHL"),
+    })
+    assert ">a\nMVLS\n>b\nMVHL" in fetch_any("UniProt", ["P69905", "P68871"]).fasta
