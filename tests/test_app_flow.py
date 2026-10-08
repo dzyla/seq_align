@@ -221,3 +221,18 @@ def test_msa_all_columns_trimmed_shows_one_warning(monkeypatch):
     assert not at.exception
     msgs = [w.value for w in at.warning if "All alignment columns were removed" in w.value]
     assert len(msgs) == 1
+
+
+def test_similarity_matrix_colour_range_controls():
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.selectbox(key="analysis_select").select("Sequence Clustering").run()
+    next(s for s in at.selectbox if s.label == "Similarity Method").set_value("Accurate (Pairwise)").run()
+    next(b for b in at.button if "Calculate Pairwise Similarity" in b.label).click().run()
+    assert not at.exception
+    assert any("off-diagonal range" in c.value for c in at.caption)
+    next(w for w in at.get("button_group") if w.key == "sim_range").set_value("Fixed 0–1").run()
+    assert not at.exception
+    assert any("0.000–1.000" in c.value for c in at.caption)

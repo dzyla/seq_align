@@ -21,6 +21,9 @@ HIERARCHICAL = "Hierarchical (average linkage)"
 CONNECTED = "Connected components (single linkage)"
 KMEANS = "K-Means on PCoA coordinates"
 CLUSTERING_METHODS = (HIERARCHICAL, CONNECTED, KMEANS)
+RANGE_MODES = {"Data range": "data", "Fixed 0–1": "fixed", "Custom": "custom"}
+RANGE_CAPTIONS = {"data": "off-diagonal range", "fixed": "fixed 0–1", "custom": "custom range"}
+HEATMAP_COLORMAPS = ("Appearance palette", "Viridis", "Cividis", "Teal", "Magma", "Greys")
 
 def sequence_clustering_section(sequences, seq_type):
     """
@@ -272,9 +275,37 @@ def sequence_clustering_section(sequences, seq_type):
             st.plotly_chart(fig_hist, width="stretch")
 
         with tab3:
-            st.markdown("### Similarity Matrix")
+            from modules.ui import palette_colorscale, show_plotly
+
+            st.subheader("Similarity matrix")
             order = cluster_order(ids, clusters, leaf_order)
-            st.plotly_chart(similarity_heatmap_figure(matrix, ids, order), width="stretch")
+            c1, c2, c3, c4 = st.columns([2, 2, 1, 1], vertical_alignment="bottom")
+            range_label = c1.segmented_control("Color range", list(RANGE_MODES), default="Data range",
+                                               required=True, key="sim_range",
+                                               help="Data range spans the off-diagonal values, so small "
+                                                    "differences between similar sequences stay visible.")
+            cmap = c2.selectbox("Colormap", HEATMAP_COLORMAPS, key="sim_cmap")
+            reverse = c3.toggle("Reverse", key="sim_reverse")
+            show_values = c4.toggle("Values", value=len(ids) <= 20, key="sim_values", disabled=len(ids) > 20,
+                                    help="Print each value in its cell (20 sequences or fewer).")
+            mode = RANGE_MODES[range_label]
+            custom = None
+            if mode == "custom":
+                c1, c2 = st.columns(2)
+                custom = (c1.number_input("Minimum", 0.0, 1.0, 0.0, 0.01, key="sim_min"),
+                          c2.number_input("Maximum", 0.0, 1.0, 1.0, 0.01, key="sim_max"))
+            try:
+                zmin, zmax = color_limits(matrix, mode, custom)
+            except ValueError as e:
+                st.error(f"{e} Showing the data range instead.")
+                mode = "data"
+                zmin, zmax = color_limits(matrix, mode)
+            colorscale = palette_colorscale() if cmap == "Appearance palette" else cmap
+            if reverse:
+                colorscale = reverse_colorscale(colorscale)
+            show_plotly(similarity_heatmap_figure(matrix, ids, order, zmin, zmax, colorscale,
+                                                  show_values and len(ids) <= 20), width="stretch")
+            st.caption(f"Colors span {zmin:.3f}–{zmax:.3f} ({RANGE_CAPTIONS[mode]}).")
             if clustering_method == HIERARCHICAL and 2 < len(ids) <= 200:
                 condensed = squareform(np.clip(1 - matrix, 0, None), checks=False)
                 fig_dg = ff.create_dendrogram(np.arange(len(ids)).reshape(-1, 1), labels=ids,
@@ -415,13 +446,44 @@ def cluster_order(ids, clusters, leaf_order=None):
     return [index[seq_id] for cluster in clusters for seq_id in cluster]
 
 
-def similarity_heatmap_figure(matrix, ids, order):
+def color_limits(matrix, mode="data", custom=None):
+    """(zmin, zmax) for a similarity heatmap. 'data' spans the off-diagonal values (the diagonal is always
+    1.0 and would flatten the scale), 'fixed' is 0-1, 'custom' uses the (min, max) pair given."""
+    if mode == "fixed":
+        return 0.0, 1.0
+    if mode == "custom":
+        lo, hi = (float(v) for v in custom)
+        if lo >= hi:
+            raise ValueError("The minimum must be below the maximum.")
+        return lo, hi
+    m = np.asarray(matrix, dtype=float)
+    values = m[~np.eye(len(m), dtype=bool)] if m.ndim == 2 and len(m) > 1 else np.array([])
+    values = values[~np.isnan(values)]
+    if not len(values):
+        return 0.0, 1.0
+    lo, hi = float(values.min()), float(values.max())
+    if hi - lo < 1e-9:
+        lo, hi = max(0.0, lo - 0.01), min(1.0, hi + 0.01)
+        if hi - lo < 1e-9:
+            lo, hi = (0.98, 1.0) if hi >= 1.0 else (0.0, 0.02)
+    return lo, hi
+
+
+def reverse_colorscale(cs):
+    """Reverse a plotly colorscale given by name ('Viridis' <-> 'Viridis_r') or as [[position, colour], ...]."""
+    if isinstance(cs, str):
+        return cs[:-2] if cs.endswith("_r") else cs + "_r"
+    return [[pos, colour] for (pos, _), (_, colour) in zip(cs, reversed(cs))]
+
+
+def similarity_heatmap_figure(matrix, ids, order, zmin=0.0, zmax=1.0, colorscale="Viridis", show_values=False):
     """Similarity heatmap with rows and columns in `order`; both axes forced categorical so numeric IDs keep it."""
     ordered_ids = [ids[i] for i in order]
     show_labels = len(ids) <= 60
     fig = go.Figure(data=go.Heatmap(
-        z=np.asarray(matrix)[np.ix_(order, order)], x=ordered_ids, y=ordered_ids, colorscale="Viridis",
-        zmin=0, zmax=1, hovertemplate="%{y} vs %{x}: %{z:.3f}<extra></extra>"))
+        z=np.asarray(matrix)[np.ix_(order, order)], x=ordered_ids, y=ordered_ids, colorscale=colorscale,
+        zmin=zmin, zmax=zmax, texttemplate="%{z:.3f}" if show_values else None,
+        hovertemplate="%{y} vs %{x}: %{z:.3f}<extra></extra>"))
     fig.update_layout(title="Pairwise Similarity Matrix (ordered by cluster)", height=700,
                       xaxis_type="category", yaxis_type="category",
                       xaxis_showticklabels=show_labels, yaxis_showticklabels=show_labels,

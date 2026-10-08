@@ -96,3 +96,46 @@ class TestClustering(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+import pytest
+
+from modules.clustering import color_limits, reverse_colorscale, similarity_heatmap_figure
+
+SIM = np.array([[1, .95, .98], [.95, 1, .96], [.98, .96, 1]])
+
+
+def test_color_limits_data_range_ignores_diagonal():
+    assert color_limits(SIM) == pytest.approx((0.95, 0.98))
+
+
+def test_color_limits_fixed_and_custom():
+    assert color_limits(SIM, "fixed") == (0.0, 1.0)
+    assert color_limits(SIM, "custom", (0.9, 1.0)) == (0.9, 1.0)
+    with pytest.raises(ValueError):
+        color_limits(SIM, "custom", (0.5, 0.5))
+
+
+@pytest.mark.parametrize("matrix,expected", [
+    (np.ones((3, 3)), (0.99, 1.0)),                          # all identical
+    (np.eye(2), (0.0, 0.01)),                                # constant zero off-diagonal
+    (np.array([[1.0]]), (0.0, 1.0)),                         # one sequence
+    (np.array([[1, np.nan], [np.nan, 1]]), (0.0, 1.0)),      # nothing usable
+    (np.array([[1, .5, np.nan], [.5, 1, .7], [np.nan, .7, 1]]), (0.5, 0.7)),  # NaNs ignored
+])
+def test_color_limits_degenerate_inputs(matrix, expected):
+    lo, hi = color_limits(matrix)
+    assert (lo, hi) == pytest.approx(expected) and lo < hi
+
+
+def test_heatmap_uses_limits_colorscale_and_values():
+    hm = similarity_heatmap_figure(SIM, ["a", "b", "c"], [0, 1, 2], 0.95, 0.98, "Cividis", True).data[0]
+    assert (hm.zmin, hm.zmax, hm.texttemplate) == (0.95, 0.98, "%{z:.3f}")
+    plain = similarity_heatmap_figure(SIM, ["a", "b", "c"], [0, 1, 2]).data[0]
+    assert (plain.zmin, plain.zmax, plain.texttemplate) == (0.0, 1.0, None)
+
+
+def test_reverse_colorscale():
+    assert reverse_colorscale("Viridis") == "Viridis_r"
+    assert reverse_colorscale("Viridis_r") == "Viridis"
+    assert reverse_colorscale([[0.0, "#000"], [1.0, "#fff"]]) == [[0.0, "#fff"], [1.0, "#000"]]
