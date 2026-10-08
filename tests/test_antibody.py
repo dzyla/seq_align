@@ -65,3 +65,34 @@ def test_scfv_two_domains():
 def test_germline_species_filter():
     df = run_numbering([("vh", VH)], "IMGT", species=["mouse"], threshold=80)
     assert df.iloc[0]["Germline Species"] in ("mouse", "")
+
+
+from modules.antibody import find_liabilities
+
+
+def test_liabilities_crafted_sequence():
+    seq = "QNGTAMDPWC"
+    labels = [str(i) for i in range(1, 11)]
+    regions = ["FR1"] * 4 + ["CDR1"] * 6
+    found = {(f["Liability"], f["Position"]) for f in find_liabilities(seq, labels, regions, "imgt", "H")}
+    assert ("N-glycosylation", "2") in found
+    assert ("Deamidation", "2") in found
+    assert ("Oxidation", "6") in found          # M in CDR1
+    assert ("Oxidation", "9") in found          # W in CDR1
+    assert ("Fragmentation", "7") in found      # DP
+    assert ("Unpaired cysteine", "10") in found
+
+
+def test_oxidation_only_in_cdrs():
+    found = find_liabilities("MW", ["1", "2"], ["FR1", "FR1"], "imgt", "H")
+    assert not any(f["Liability"] == "Oxidation" for f in found)
+
+
+def test_canonical_cysteines_not_flagged():
+    found = find_liabilities("CC", ["23", "104"], ["FR1", "FR3"], "imgt", "H")
+    assert not any(f["Liability"] == "Unpaired cysteine" for f in found)
+
+
+def test_no_region_scheme():
+    found = find_liabilities("NGTC", ["1", "2", "3", "4"], ["", "", "", ""], "aho", "H")
+    assert {f["Liability"] for f in found} == {"N-glycosylation", "Deamidation"}

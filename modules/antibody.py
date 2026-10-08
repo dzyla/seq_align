@@ -1,3 +1,4 @@
+import re
 import traceback
 
 import anarci
@@ -24,6 +25,22 @@ REGION_DEFINITIONS = {
     "kabat": {"H": _KABAT_H, "L": _KABAT_L},
     "chothia": {"H": _CHOTHIA_H, "L": _KABAT_L},
     "martin": {"H": _CHOTHIA_H, "L": _KABAT_L},
+}
+# (name, regex, severity, report only inside CDRs)
+LIABILITY_RULES = [
+    ("N-glycosylation", r"N[^P][ST]", "High", False),
+    ("Deamidation", r"NG", "High", False),
+    ("Deamidation", r"N[ST]", "Medium", False),
+    ("Isomerization", r"D[GS]", "Medium", False),
+    ("Fragmentation", r"DP", "Medium", False),
+    ("Oxidation", r"[MW]", "Medium", True),
+]
+# Conserved intradomain disulfide positions per numbering scheme.
+CANONICAL_CYSTEINES = {
+    "imgt": {"H": {23, 104}, "L": {23, 104}},
+    "kabat": {"H": {22, 92}, "L": {23, 88}},
+    "chothia": {"H": {22, 92}, "L": {23, 88}},
+    "martin": {"H": {22, 92}, "L": {23, 88}},
 }
 REGION_COLORS = {"FR1": "#e0e0e0", "CDR1": "#ffcccc", "FR2": "#e0e0e0", "CDR2": "#ccffcc",
                  "FR3": "#e0e0e0", "CDR3": "#ccccff", "FR4": "#e0e0e0"}
@@ -52,6 +69,26 @@ def residue_regions(numbering, scheme, chain_type):
             region = next((name for name, start, end in bounds if start <= pos <= end), "")
         out.append((f"{pos}{ins.strip()}", region))
     return out
+
+
+def find_liabilities(sequence, labels, regions, scheme, chain_type):
+    """Flag common sequence liabilities in one numbered domain (for review, not prediction)."""
+    found = []
+    for name, pattern, severity, cdr_only in LIABILITY_RULES:
+        for match in re.finditer(f"(?=({pattern}))", sequence):
+            i = match.start()
+            if cdr_only and not regions[i].startswith("CDR"):
+                continue
+            found.append({"Liability": name, "Motif": match.group(1), "Position": labels[i],
+                          "Region": regions[i], "Severity": severity})
+    canonical = CANONICAL_CYSTEINES.get(scheme.lower(), {}).get("H" if chain_type == "H" else "L")
+    if canonical is not None:
+        for i, aa in enumerate(sequence):
+            number = int(re.match(r"\d+", labels[i]).group())
+            if aa == "C" and number not in canonical:
+                found.append({"Liability": "Unpaired cysteine", "Motif": "C", "Position": labels[i],
+                              "Region": regions[i], "Severity": "High"})
+    return found
 
 
 def public_columns(df):
