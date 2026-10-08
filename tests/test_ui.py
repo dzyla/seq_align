@@ -97,3 +97,19 @@ def test_plotly_charts_go_through_show_plotly():
     hits = [f"{f.name}:{i}" for f in SOURCES if f.name != "ui.py"
             for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1) if "st.plotly_chart(" in line]
     assert hits == []
+
+
+RUN_BUTTONS = ["Run Pairwise Alignment", "Run MSA", "Find Best Match", "Run/Update MSA",
+               "Calculate Pairwise Similarity", "Find ORFs", "Predict Domains",
+               "Calculate Phylogenetic Tree from MSA", "Build Tree"]
+
+
+def _button_call(label):
+    text = "\n".join(f.read_text(encoding="utf-8") for f in SOURCES)
+    start = text.index(f'button("{label}"')
+    return text[start:text.index(")", text.index(":", start) + 1) + 1]
+
+
+def test_run_and_fetch_buttons_have_material_icons():
+    assert all('icon=":material/play_arrow:"' in _button_call(label) for label in RUN_BUTTONS)
+    assert all('icon=":material/cloud_download:"' in _button_call(label) for label in ("Fetch", "Fetch structure"))

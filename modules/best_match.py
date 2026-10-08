@@ -99,7 +99,7 @@ def best_match_finder_section(sequences, seq_type):
         'regex_exclude': regex_exclude,
     }
 
-    run_analysis = st.button("Find Best Match")
+    run_analysis = st.button("Find Best Match", icon=":material/play_arrow:")
 
     params_changed = st.session_state.best_match_params != current_params
 

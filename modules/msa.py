@@ -65,7 +65,7 @@ def msa_section(sequences, seq_type):
     current_params = {"fingerprint": fingerprint(sequences), "seq_type": seq_type, "method": msa_method}
     params_changed = have_params_changed(current_params, "last_msa_params")
 
-    if st.button("Run MSA"):
+    if st.button("Run MSA", icon=":material/play_arrow:"):
         with st.spinner("Performing MSA - this may take a moment for large datasets..."):
             try:
                 st.session_state.msa_aligned = cached_run_msa(
@@ -267,7 +267,8 @@ def msa_section(sequences, seq_type):
                                      help="0 = no bootstrap. 100 is a common choice.")
         tree_params = {"method": tree_method, "correction": correction, "replicates": replicates,
                        "max_gap": max_gap, "max_id": max_id, "ref_seq_id": ref_seq_id}
-        if st.button("Calculate Phylogenetic Tree from MSA", disabled=view_empty):
+        if st.button("Calculate Phylogenetic Tree from MSA", disabled=view_empty,
+                     icon=":material/play_arrow:"):
             with st.spinner("Building tree from MSA..."):
                 try:
                     if replicates > 0:

@@ -264,7 +264,7 @@ def antibody_prediction_section(sequences):
     params = {"ids": tuple(s.id for s in sequences), "seqs": tuple(str(s.seq) for s in sequences),
               "scheme": scheme, "species": tuple(species), "threshold": threshold}
 
-    if st.button("Predict Domains", key="predict_domains"):
+    if st.button("Predict Domains", key="predict_domains", icon=":material/play_arrow:"):
         with st.spinner("Running ANARCI..."):
             try:
                 df = run_numbering([(s.id, str(s.seq)) for s in sequences], scheme,

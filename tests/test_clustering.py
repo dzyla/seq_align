@@ -139,3 +139,8 @@ def test_reverse_colorscale():
     assert reverse_colorscale("Viridis") == "Viridis_r"
     assert reverse_colorscale("Viridis_r") == "Viridis"
     assert reverse_colorscale([[0.0, "#000"], [1.0, "#fff"]]) == [[0.0, "#fff"], [1.0, "#000"]]
+
+
+def test_similarity_heatmap_title():
+    assert similarity_heatmap_figure(SIM, ["a", "b", "c"], [0, 1, 2]).layout.title.text == \
+        "Pairwise similarity (ordered by cluster)"

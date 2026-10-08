@@ -65,7 +65,7 @@ def dna_translation_section(sequences):
     min_len = st.number_input("Minimum ORF Length (AA)", value=30, min_value=10, step=5)
     params = {"id": selected_seq.id, "seq": str(selected_seq.seq), "min_len": min_len, "table": table}
 
-    if st.button("Find ORFs", key="find_orfs"):
+    if st.button("Find ORFs", key="find_orfs", icon=":material/play_arrow:"):
         st.session_state.orf_results = {
             "params": params, "orfs": find_orfs(str(selected_seq.seq), min_len=min_len, table=table)}
 

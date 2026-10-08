@@ -148,7 +148,7 @@ def pairwise_alignment_section(sequences, seq_type):
     # Check if parameters have changed
     params_changed = have_params_changed(current_params, 'last_pairwise_params')
 
-    run_alignment = st.button("Run Pairwise Alignment")
+    run_alignment = st.button("Run Pairwise Alignment", icon=":material/play_arrow:")
 
     if run_alignment:
         with st.spinner("Performing pairwise alignment..."):

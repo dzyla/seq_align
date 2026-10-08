@@ -68,7 +68,7 @@ def sequence_clustering_section(sequences, seq_type):
     ids = [seq.id for seq in sequences]
 
     if method == "Fast (MSA-based)":
-        if st.button("Run/Update MSA"):
+        if st.button("Run/Update MSA", icon=":material/play_arrow:"):
             with st.spinner("Calculating MSA..."):
                 try:
                     st.session_state.clustering_msa = cached_run_msa(
@@ -106,7 +106,7 @@ def sequence_clustering_section(sequences, seq_type):
                         st.session_state.clustering_ids = aligned_ids
 
     else: # Accurate Pairwise
-        if st.button("Calculate Pairwise Similarity"):
+        if st.button("Calculate Pairwise Similarity", icon=":material/play_arrow:"):
             with st.spinner("Calculating pairwise similarity matrix (this may take time)..."):
                 progress_bar = st.progress(0.0)
                 matrix, sorted_ids = calculate_similarity_matrix_pairwise(
@@ -485,7 +485,7 @@ def similarity_heatmap_figure(matrix, ids, order, zmin=0.0, zmax=1.0, colorscale
         z=np.asarray(matrix)[np.ix_(order, order)], x=ordered_ids, y=ordered_ids, colorscale=colorscale,
         zmin=zmin, zmax=zmax, texttemplate="%{z:.3f}" if show_values else None,
         hovertemplate="%{y} vs %{x}: %{z:.3f}<extra></extra>"))
-    fig.update_layout(title="Pairwise Similarity Matrix (ordered by cluster)", height=700,
+    fig.update_layout(title="Pairwise similarity (ordered by cluster)", height=700,
                       xaxis_type="category", yaxis_type="category",
                       xaxis_showticklabels=show_labels, yaxis_showticklabels=show_labels,
                       yaxis_autorange="reversed")

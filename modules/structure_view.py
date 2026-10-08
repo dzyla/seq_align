@@ -187,7 +187,7 @@ def _add_structure_controls(key):
         sf = StructureFile(name=upload.name, data=upload.getvalue(), fmt=fmt)
         st.session_state.extra_structures = {**st.session_state.get("extra_structures", {}), sf.name: sf}
     ident = c2.text_input("…or fetch: PDB ID or UniProt accession (AlphaFold)", key=f"{key}_fetch_id")
-    if c2.button("Fetch structure", key=f"{key}_fetch_btn") and ident.strip():
+    if c2.button("Fetch structure", key=f"{key}_fetch_btn", icon=":material/cloud_download:") and ident.strip():
         ident = ident.strip().upper()
         try:
             source = "PDB (structure)" if len(ident) == 4 else "AlphaFold DB (structure)"

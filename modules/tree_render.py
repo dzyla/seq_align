@@ -666,7 +666,8 @@ def render_plotly(drawing, dark=False):
                                  line=dict(color=color, width=width * 1.3, dash="dot" if dashed else "solid")))
     if drawing.dots:
         fig.add_trace(go.Scatter(x=[d[0] for d in drawing.dots], y=[d[1] for d in drawing.dots], mode="markers",
-                                 marker=dict(color=[recolor(d[2]) for d in drawing.dots], size=[d[4] * 1.3 for d in drawing.dots],
+                                 marker=dict(color=[recolor(d[2]) for d in drawing.dots],
+                                             size=[d[4] * 1.3 for d in drawing.dots],
                                              line=dict(color=[recolor(d[3]) for d in drawing.dots], width=1)),
                                  text=[d[5] for d in drawing.dots], hovertemplate="%{text}<extra></extra>",
                                  showlegend=False))

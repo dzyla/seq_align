@@ -125,7 +125,7 @@ def handle_input(input_format):
         ids_text = st.sidebar.text_input("ID(s)", key="fetch_ids",
                                          placeholder="e.g. P69905, P68871  or  1CRN",
                                          help="Separate several IDs with commas or spaces.")
-        if st.sidebar.button("Fetch", key="fetch_button"):
+        if st.sidebar.button("Fetch", key="fetch_button", icon=":material/cloud_download:"):
             try:
                 with st.spinner(f"Fetching from {source}..."):
                     st.session_state.fetched = fetch_any(source, parse_id_list(ids_text))
@@ -291,7 +291,7 @@ def main():
                                   help="Jukes–Cantor (DNA) or Kimura (protein) distance correction.")
         params = {"dataset": st.session_state.dataset_fp, "seq_type": seq_type,
                   "method": tree_method, "correction": correction}
-        if st.button("Build Tree", key="build_tree"):
+        if st.button("Build Tree", key="build_tree", icon=":material/play_arrow:"):
             with st.spinner("Building phylogenetic tree..."):
                 try:
                     tree = build_phylogenetic_tree(sequences, seq_type, TREE_METHODS[tree_method], correction)
