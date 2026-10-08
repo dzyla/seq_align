@@ -99,3 +99,15 @@ def test_tree_figure_has_all_leaves():
     assert sorted(name for _, _, name in leaves) == ["A", "B", "C"]
     fig = tree_figure(tree)
     assert sorted(fig.data[1].text) == ["A", "B", "C"]
+
+
+def test_bootstrap_tree_empty_alignment_returns_tree():
+    tree = bootstrap_tree([("a", ""), ("b", ""), ("c", "")], "DNA", replicates=10)
+    assert sorted(t.name for t in tree.get_terminals()) == ["a", "b", "c"]
+
+
+def test_bootstrap_tree_same_seed_same_supports():
+    def supports():
+        t = bootstrap_tree(GROUPED, "DNA", correction=False, replicates=20, seed=3)
+        return [c.confidence for c in t.get_nonterminals()]
+    assert supports() == supports()

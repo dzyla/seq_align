@@ -213,22 +213,29 @@ def tree_splits(tree, all_names, anchor):
 
 def bootstrap_tree(aligned_pairs, seq_type, method="nj", correction=True, replicates=100, seed=0):
     """Tree from the full alignment; internal clades carry % bootstrap support (column resampling)."""
-    names = [i for i, _ in aligned_pairs]
-    seqs = [s.upper() for _, s in aligned_pairs]
-    target = _tree_from_matrix(names, alignment_distance_matrix(seqs, seq_type, correction), method)
-    arr = np.frombuffer("".join(seqs).encode(), dtype=np.uint8).reshape(len(seqs), -1)
-    rng = np.random.default_rng(seed)
-    all_names, anchor = frozenset(names), names[0]
-    counts = Counter()
-    for _ in range(replicates):
-        cols = rng.integers(0, arr.shape[1], arr.shape[1])
-        replicate = [row.tobytes().decode() for row in arr[:, cols]]
-        tree = _tree_from_matrix(names, alignment_distance_matrix(replicate, seq_type, correction), method)
-        counts.update(tree_splits(tree, all_names, anchor))
-    for clade in target.get_nonterminals():
-        split = _normalized_split(frozenset(t.name for t in clade.get_terminals()), all_names, anchor)
-        clade.confidence = round(100 * counts[split] / replicates) if split is not None else None
-    return target
+    try:
+        names = [i for i, _ in aligned_pairs]
+        seqs = [s.upper() for _, s in aligned_pairs]
+        target = _tree_from_matrix(names, alignment_distance_matrix(seqs, seq_type, correction), method)
+        if len(seqs) < 3 or not seqs[0]:
+            return target
+        arr = np.frombuffer("".join(seqs).encode(), dtype=np.uint8).reshape(len(seqs), -1)
+        rng = np.random.default_rng(seed)
+        all_names, anchor = frozenset(names), names[0]
+        counts = Counter()
+        for _ in range(replicates):
+            cols = rng.integers(0, arr.shape[1], arr.shape[1])
+            replicate = [row.tobytes().decode() for row in arr[:, cols]]
+            tree = _tree_from_matrix(names, alignment_distance_matrix(replicate, seq_type, correction), method)
+            counts.update(tree_splits(tree, all_names, anchor))
+        for clade in target.get_nonterminals():
+            split = _normalized_split(frozenset(t.name for t in clade.get_terminals()), all_names, anchor)
+            clade.confidence = round(100 * counts[split] / replicates) if split is not None else None
+        return target
+    except TreeError:
+        raise
+    except Exception as e:
+        raise TreeError(f"Bootstrap tree failed: {e}") from e
 
 
 def tree_layout(tree):
