@@ -41,5 +41,25 @@ class TestTranslation(unittest.TestCase):
         self.assertEqual(orfs[0]['Sequence'], "MP")
         self.assertEqual(orfs[1]['Sequence'], "MA")
 
+    def test_nested_methionines_give_one_orf(self):
+        seq = "ATG" + "GCC" * 5 + "ATG" + "GCC" * 40 + "TAA"
+        orfs = find_orfs(seq, min_len=10)
+        self.assertEqual(len(orfs), 1)
+        self.assertEqual(orfs[0]["Length (AA)"], 47)
+
+    def test_nucleotide_coordinates_forward_and_reverse(self):
+        fwd = find_orfs("ATGCCCTGA", min_len=1)[0]
+        self.assertEqual((fwd["Start (nt)"], fwd["End (nt)"], fwd["Strand"]), (1, 9, "+"))
+        rev = find_orfs("GG" + "TCAGGGCAT", min_len=1)[0]
+        self.assertEqual((rev["Start (nt)"], rev["End (nt)"], rev["Strand"]), (3, 11, "-"))
+
+    def test_orf_rna_input(self):
+        orfs = find_orfs("AUGCCCUGA", min_len=1)
+        self.assertEqual(orfs[0]["Sequence"], "MP")
+
+    def test_codon_table(self):
+        self.assertEqual(find_orfs("ATGAGATAA", min_len=1, table=1)[0]["Sequence"], "MR")
+        self.assertEqual(find_orfs("ATGAGATAA", min_len=1, table=2)[0]["Sequence"], "M")
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,18 @@
+import re
+
 import streamlit as st
 import pandas as pd
 from Bio.Seq import Seq
+
+from modules.seqtools import clean_sequence
+
+CODON_TABLES = {
+    "1 Standard": 1,
+    "2 Vertebrate mitochondrial": 2,
+    "4 Mold/Mycoplasma": 4,
+    "5 Invertebrate mitochondrial": 5,
+    "11 Bacterial/Plastid": 11,
+}
 
 def dna_translation_section(sequences):
     """
@@ -23,13 +35,14 @@ def dna_translation_section(sequences):
     with st.expander("Original DNA Sequence", expanded=False):
         st.code(str(selected_seq.seq))
 
+    table_label = st.selectbox("Codon table", list(CODON_TABLES))
+    table = CODON_TABLES[table_label]
+
     # Standard Translation (Frame +1)
     st.subheader("Translation (Frame +1)")
 
     # Clean sequence
-    dna_seq = str(selected_seq.seq).upper()
-    valid_chars = set('ATGCNRYKMSWBDHV')
-    clean_seq = ''.join(c for c in dna_seq if c in valid_chars)
+    clean_seq = clean_sequence(selected_seq.seq, "DNA")
 
     # Translate
     remainder = len(clean_seq) % 3
@@ -39,7 +52,7 @@ def dna_translation_section(sequences):
         clean_seq_tr = clean_seq
 
     try:
-        protein_seq = Seq(clean_seq_tr).translate()
+        protein_seq = Seq(clean_seq_tr).translate(table=table)
         st.code(str(protein_seq))
     except Exception as e:
         st.error(f"Error during translation: {e}")
@@ -48,7 +61,7 @@ def dna_translation_section(sequences):
     min_len = st.number_input("Minimum ORF Length (AA)", value=30, min_value=10, step=5)
 
     if st.button("Find ORFs"):
-        orfs = find_orfs(str(selected_seq.seq).upper(), min_len=min_len)
+        orfs = find_orfs(str(selected_seq.seq), min_len=min_len, table=table)
 
         if orfs:
             st.success(f"Found {len(orfs)} ORFs.")
@@ -62,76 +75,44 @@ def dna_translation_section(sequences):
             # Detailed view
             st.subheader("ORF Sequences")
             for index, row in df.iterrows():
-                with st.expander(f"Frame {row['Frame']}, Start {row['Start (AA)']}, Length {row['Length (AA)']}"):
+                with st.expander(f"Frame {row['Frame']}, {row['Start (nt)']}–{row['End (nt)']} nt, {row['Length (AA)']} aa"):
                     st.code(row['Sequence'])
         else:
             st.warning("No ORFs found with current settings.")
 
 
-def find_orfs(sequence, min_len=30):
+def find_orfs(sequence, min_len=30, table=1):
     """
-    Find Open Reading Frames (ORFs) in a DNA sequence.
-    Searches all 6 reading frames.
+    Find ORFs (first ATG to stop) in all six frames; one ORF per stop codon.
 
-    Parameters:
-        sequence (str): DNA sequence.
-        min_len (int): Minimum length of the protein (in amino acids).
-
-    Returns:
-        list: List of dictionaries containing ORF details.
+    Coordinates are 1-based, inclusive, on the input strand; End includes the stop codon.
     """
+    seq = clean_sequence(sequence, "DNA")
+    length = len(seq)
     orfs = []
-    seq_obj = Seq(sequence)
-
-    frames = [1, 2, 3, -1, -2, -3]
-
-    for frame in frames:
-        if frame > 0:
-            nucleotide_seq = seq_obj[frame - 1:]
-            frame_label = f"+{frame}"
-        else:
-            nucleotide_seq = seq_obj.reverse_complement()[abs(frame) - 1:]
-            frame_label = f"{frame}"
-
-        # Translate
-        n_len = len(nucleotide_seq)
-        remainder = n_len % 3
-        if remainder > 0:
-            nucleotide_seq = nucleotide_seq[:-remainder]
-
-        if len(nucleotide_seq) == 0:
-            continue
-
-        protein_seq = nucleotide_seq.translate(table=1)  # Standard code
-        protein_str = str(protein_seq)
-
-        aa_start = 0
-        while aa_start < len(protein_str):
-            # Find next Met
-            met_index = protein_str.find('M', aa_start)
-            if met_index == -1:
-                break
-
-            # Find next Stop after Met
-            stop_index = protein_str.find('*', met_index)
-
-            if stop_index != -1:
-                # Found an ORF
-                length_aa = stop_index - met_index
-                if length_aa >= min_len:
-                    orf_seq = protein_str[met_index:stop_index]
-
+    for strand, strand_seq in (("+", Seq(seq)), ("-", Seq(seq).reverse_complement())):
+        for offset in range(3):
+            frame_seq = strand_seq[offset:]
+            frame_seq = frame_seq[:len(frame_seq) - len(frame_seq) % 3]
+            if not frame_seq:
+                continue
+            protein = str(frame_seq.translate(table=table))
+            segment_start = 0
+            for match in re.finditer(r"\*", protein):
+                stop = match.start()
+                met = protein.find("M", segment_start, stop)
+                if met != -1 and stop - met >= min_len:
+                    start_nt = offset + 3 * met + 1
+                    end_nt = offset + 3 * (stop + 1)
+                    if strand == "-":
+                        start_nt, end_nt = length - end_nt + 1, length - start_nt + 1
                     orfs.append({
-                        "Frame": frame_label,
-                        "Start (AA)": met_index + 1,
-                        "End (AA)": stop_index + 1,
-                        "Length (AA)": length_aa,
-                        "Sequence": orf_seq
+                        "Frame": f"{strand}{offset + 1}",
+                        "Strand": strand,
+                        "Start (nt)": start_nt,
+                        "End (nt)": end_nt,
+                        "Length (AA)": stop - met,
+                        "Sequence": protein[met:stop],
                     })
-
-                # Move start to find nested ORFs
-                aa_start = met_index + 1
-            else:
-                break
-
+                segment_start = stop + 1
     return orfs
