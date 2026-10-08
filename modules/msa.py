@@ -10,7 +10,7 @@ from typing import List, Dict, Tuple
 from modules.utils import have_params_changed
 from modules.viz import msa_to_image, plot_msa_image
 from modules.seqtools import clean_sequence
-from modules.phylogeny import phylogenetic_tree_section, build_tree_from_alignment
+from modules.phylogeny import TREE_METHODS, TreeError, build_tree_from_alignment, phylogenetic_tree_section
 
 def msa_section(sequences, seq_type):
     """
@@ -207,14 +207,20 @@ def msa_section(sequences, seq_type):
 
             with tabs[-1]:
                 st.subheader("🌳 Phylogenetic Tree from MSA")
+                c_m, c_c = st.columns(2)
+                tree_method = c_m.selectbox("Tree method", list(TREE_METHODS), key="msa_tree_method")
+                correction = c_c.checkbox("Correct for multiple substitutions", value=True, key="msa_tree_corr",
+                                          help="Jukes–Cantor (DNA) or Kimura (protein) distance correction.")
                 if st.button("Calculate Phylogenetic Tree from MSA"):
                     with st.spinner("Building tree from MSA..."):
                         alignment = AlignIO.read(StringIO(st.session_state.msa_result), msa_output_format)
-                        tree = build_tree_from_alignment(alignment, seq_type)
-                        if tree:
-                            st.session_state.msa_tree = tree
+                        try:
+                            st.session_state.msa_tree = build_tree_from_alignment(
+                                alignment, seq_type, TREE_METHODS[tree_method], correction)
+                        except TreeError as e:
+                            st.error(str(e))
 
-                if 'msa_tree' in st.session_state and st.session_state.msa_tree:
+                if st.session_state.get('msa_tree'):
                     phylogenetic_tree_section(st.session_state.msa_tree)
 
 class MSAError(RuntimeError):

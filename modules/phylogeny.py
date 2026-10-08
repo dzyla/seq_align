@@ -1,9 +1,22 @@
+import math
+
+import matplotlib.pyplot as plt
+import numpy as np
 import streamlit as st
 from Bio import Phylo
-from Bio.Phylo.TreeConstruction import DistanceTreeConstructor, DistanceMatrix, DistanceCalculator
-import matplotlib.pyplot as plt
-from io import StringIO, BytesIO
+from Bio.Phylo.TreeConstruction import DistanceMatrix, DistanceTreeConstructor
+from io import BytesIO, StringIO
+
 from modules.pairwise import get_aligner
+from modules.seqtools import clean_sequence
+
+TREE_METHODS = {"Neighbor-Joining": "nj", "UPGMA": "upgma"}
+MAX_DISTANCE = 10.0
+
+
+class TreeError(RuntimeError):
+    """Raised when a tree cannot be built."""
+
 
 def phylogenetic_tree_section(tree):
     """
@@ -33,43 +46,35 @@ def phylogenetic_tree_section(tree):
             show_labels = st.checkbox("Show Labels", value=True)
             show_inner_labels = st.checkbox("Show Inner Node Labels", value=False, help="Show labels for internal nodes (e.g., bootstrap values or node names).")
 
-    # Update font size
-    plt.rcParams.update({'font.size': font_size})
-
-    fig, ax = plt.subplots(figsize=(tree_width, tree_height))
+    with plt.rc_context({'font.size': font_size}):
+        fig, ax = plt.subplots(figsize=(tree_width, tree_height))
     try:
-        # Define label function to control visibility
         def label_func(node):
             if node.is_terminal():
                 return str(node) if show_labels else ''
-            else:
-                return str(node) if show_inner_labels else ''
+            return str(node) if show_inner_labels else ''
 
-        Phylo.draw(tree, axes=ax, do_show=False, show_confidence=False, label_func=label_func)
-
+        with plt.rc_context({'font.size': font_size}):
+            Phylo.draw(tree, axes=ax, do_show=False, show_confidence=False, label_func=label_func)
         ax.set_title("Phylogenetic Tree", fontsize=16)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_visible(False)
+        for side in ('top', 'right', 'left'):
+            ax.spines[side].set_visible(False)
         ax.get_yaxis().set_visible(False)
-
         st.pyplot(fig)
 
         buf = BytesIO()
         fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
         buf.seek(0)
-        st.download_button(
-            label="📥 Download Tree Image (PNG)",
-            data=buf,
-            file_name="phylogenetic_tree.png",
-            mime="image/png"
-        )
+        st.download_button(label="📥 Download Tree Image (PNG)", data=buf,
+                           file_name="phylogenetic_tree.png", mime="image/png")
     except Exception as e:
         st.error(f"Could not draw the tree graphically: {e}")
         st.info("Displaying ASCII version of the tree instead.")
         tree_io = StringIO()
         Phylo.draw_ascii(tree, out=tree_io)
         st.code(tree_io.getvalue())
+    finally:
+        plt.close(fig)
 
     # Newick format
     st.subheader("📄 Newick Format")
@@ -86,86 +91,87 @@ def phylogenetic_tree_section(tree):
         mime="text/plain"
     )
 
-def build_tree_from_alignment(alignment, seq_type):
-    """
-    Build a phylogenetic tree from a Multiple Sequence Alignment.
-    """
+
+def p_distance(aligned1, aligned2):
+    """Fraction of differing residues over columns where neither sequence has a gap."""
+    valid = diffs = 0
+    for a, b in zip(aligned1, aligned2):
+        if a != '-' and b != '-':
+            valid += 1
+            diffs += a != b
+    return diffs / valid if valid else None
+
+
+def correct_distance(p, seq_type):
+    """Jukes–Cantor (DNA) or Kimura (protein) correction for multiple substitutions, capped."""
+    if seq_type == "DNA":
+        x = 1 - 4 * p / 3
+        return MAX_DISTANCE if x <= 0 else min(MAX_DISTANCE, -0.75 * math.log(x))
+    x = 1 - p - 0.2 * p * p
+    return MAX_DISTANCE if x <= 0 else min(MAX_DISTANCE, -math.log(x))
+
+
+def _finish(p, seq_type, correction):
+    if p is None:
+        return MAX_DISTANCE if correction else 1.0
+    return correct_distance(p, seq_type) if correction else p
+
+
+def alignment_distance_matrix(aligned, seq_type, correction=True):
+    """Symmetric distance matrix from aligned strings (pairwise deletion of gap columns)."""
+    n = len(aligned)
+    matrix = np.zeros((n, n))
+    upper = [s.upper() for s in aligned]
+    for i in range(n):
+        for j in range(i + 1, n):
+            matrix[i, j] = matrix[j, i] = _finish(p_distance(upper[i], upper[j]), seq_type, correction)
+    return matrix
+
+
+def compute_distance(seq1, seq2, seq_type, correction=True, aligner=None):
+    """Distance between two unaligned sequences via global pairwise alignment."""
+    s1 = clean_sequence(seq1, seq_type)
+    s2 = clean_sequence(seq2, seq_type)
+    if not s1 or not s2:
+        return _finish(None, seq_type, correction)
+    aligner = aligner or get_aligner(seq_type, mode="global")
     try:
-        if seq_type == 'DNA':
-            calculator = DistanceCalculator('identity')
-        else: # Protein
-            calculator = DistanceCalculator('blosum62')
-
-        dm = calculator.get_distance(alignment)
-        constructor = DistanceTreeConstructor()
-        tree = constructor.upgma(dm)
-        return tree
-    except Exception as e:
-        st.error(f"Tree construction from MSA failed: {e}")
-        return None
-
-
-def build_phylogenetic_tree(sequences, seq_type):
-    """
-    Build a simple phylogenetic tree from sequences using a distance matrix.
-
-    Parameters:
-        sequences: List of sequence records
-        seq_type (str): Type of sequences ('DNA' or 'Protein')
-
-    Returns:
-        Tree: BioPython Tree object
-    """
-    try:
-        ids = [seq.id for seq in sequences]
-        matrix = []
-        for i, seq1 in enumerate(sequences):
-            row = []
-            for seq2 in sequences[:i + 1]:
-                distance = compute_distance(seq1.seq, seq2.seq, seq_type)
-                row.append(distance)
-            matrix.append(row)
-        distance_matrix = DistanceMatrix(names=ids, matrix=matrix)
-        constructor = DistanceTreeConstructor()
-        tree = constructor.upgma(distance_matrix)
-        return tree
-    except Exception as e:
-        st.error(f"Tree construction failed: {e}")
-        return None
-
-
-def compute_distance(seq1, seq2, seq_type):
-    """
-    Compute a simple distance between two sequences.
-
-    Parameters:
-        seq1: First sequence
-        seq2: Second sequence
-        seq_type (str): Type of sequences ('DNA' or 'Protein')
-
-    Returns:
-        float: Distance value between 0 and 1
-    """
-    # Use standard gap scores for distance computation
-    aligner = get_aligner(seq_type, mode='global')
-
-    alignments = aligner.align(seq1, seq2)
-    try:
-        alignment = next(alignments)
+        alignment = next(iter(aligner.align(s1, s2)))
     except StopIteration:
-        return 1.0
-    aligned_seq1 = str(alignment[0])
-    aligned_seq2 = str(alignment[1])
+        return _finish(None, seq_type, correction)
+    return _finish(p_distance(str(alignment[0]), str(alignment[1])), seq_type, correction)
 
-    # Count differences (excluding positions with gaps)
-    differences = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a != b and a != '-' and b != '-')
 
-    # Count alignment positions without gaps in both sequences
-    valid_positions = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a != '-' and b != '-')
+def _tree_from_matrix(names, matrix, method):
+    lower = [[float(matrix[i][j]) for j in range(i + 1)] for i in range(len(names))]
+    constructor = DistanceTreeConstructor()
+    dm = DistanceMatrix(names=list(names), matrix=lower)
+    tree = constructor.nj(dm) if method == "nj" else constructor.upgma(dm)
+    if method == "nj" and len(names) > 2:
+        tree.root_at_midpoint()
+    return tree
 
-    # Calculate distance as proportion of differences
-    if valid_positions == 0:
-        return 1.0
 
-    distance = differences / valid_positions
-    return distance
+def build_tree_from_alignment(alignment, seq_type, method="nj", correction=True):
+    """Tree from an MSA (Biopython MultipleSeqAlignment)."""
+    try:
+        names = [record.id for record in alignment]
+        matrix = alignment_distance_matrix([str(r.seq) for r in alignment], seq_type, correction)
+        return _tree_from_matrix(names, matrix, method)
+    except Exception as e:
+        raise TreeError(f"Tree construction from MSA failed: {e}") from e
+
+
+def build_phylogenetic_tree(sequences, seq_type, method="nj", correction=True):
+    """Tree from unaligned SeqRecords using pairwise global alignments."""
+    try:
+        aligner = get_aligner(seq_type, mode="global")
+        n = len(sequences)
+        matrix = np.zeros((n, n))
+        for i in range(n):
+            for j in range(i + 1, n):
+                matrix[i, j] = matrix[j, i] = compute_distance(
+                    sequences[i].seq, sequences[j].seq, seq_type, correction, aligner)
+        return _tree_from_matrix([s.id for s in sequences], matrix, method)
+    except Exception as e:
+        raise TreeError(f"Tree construction failed: {e}") from e

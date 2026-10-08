@@ -10,7 +10,7 @@ from modules.best_match import best_match_finder_section
 from modules.clustering import sequence_clustering_section
 from modules.antibody import antibody_prediction_section
 from modules.conversion import format_conversion_section
-from modules.phylogeny import phylogenetic_tree_section, build_phylogenetic_tree
+from modules.phylogeny import TREE_METHODS, TreeError, build_phylogenetic_tree, phylogenetic_tree_section
 from modules.dna import dna_translation_section
 from modules.pdb_renumber import pdb_renumber_section
 
@@ -215,15 +215,19 @@ def main():
             if tree:
                 phylogenetic_tree_section(tree)
             elif sequences:
+                c_m, c_c = st.columns(2)
+                tree_method = c_m.selectbox("Tree method", list(TREE_METHODS))
+                correction = c_c.checkbox("Correct for multiple substitutions", value=True)
                 with st.spinner("Building phylogenetic tree..."):
-                    new_tree = build_phylogenetic_tree(sequences, seq_type)
-                    if new_tree:
-                        st.session_state.tree = new_tree
-                        if 'tree_ascii' in st.session_state: del st.session_state.tree_ascii
-                        if 'tree_newick' in st.session_state: del st.session_state.tree_newick
-                        phylogenetic_tree_section(new_tree)
-                    else:
-                        st.error("Could not build the phylogenetic tree.")
+                    try:
+                        new_tree = build_phylogenetic_tree(sequences, seq_type, TREE_METHODS[tree_method], correction)
+                    except TreeError as e:
+                        st.error(str(e))
+                        new_tree = None
+                if new_tree:
+                    st.session_state.tree = new_tree
+                    if 'tree_newick' in st.session_state: del st.session_state.tree_newick
+                    phylogenetic_tree_section(new_tree)
     else:
         st.info("Please upload sequences or a Newick tree in the sidebar to begin.")
 
