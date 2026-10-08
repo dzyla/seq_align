@@ -4,12 +4,12 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from pyfamsa import Aligner as PyFAMSAAligner, Sequence as PyFAMSASequence
 from io import StringIO
-import traceback
+from collections import Counter
 import pandas as pd
 from typing import List, Dict, Tuple
 from modules.utils import have_params_changed
 from modules.viz import msa_to_image, plot_msa_image
-from modules.parsers import parse_sequences_from_text
+from modules.seqtools import clean_sequence
 from modules.phylogeny import phylogenetic_tree_section, build_tree_from_alignment
 
 def msa_section(sequences, seq_type):
@@ -39,7 +39,7 @@ def msa_section(sequences, seq_type):
 
     msa_output_format = st.selectbox(
         "Select MSA Output Format",
-        ("fasta", "clustal", "phylip", "stockholm"),
+        MSA_OUTPUT_FORMATS,
         help="Choose the format for saving the alignment results"
     )
 
@@ -84,7 +84,11 @@ def msa_section(sequences, seq_type):
         # Only recalculate if parameters changed or explicitly requested
         if run_msa or msa_params_changed:
             with st.spinner("Performing MSA - this may take a moment for large datasets..."):
-                msa_result, mutations = perform_msa(sequences, ref_seq_id, seq_type, msa_output_format)
+                try:
+                    msa_result, mutations = perform_msa(sequences, ref_seq_id, seq_type, msa_output_format)
+                except MSAError as e:
+                    st.error(str(e))
+                    msa_result, mutations = "", {}
                 st.session_state.msa_result = msa_result
                 st.session_state.mutations = mutations
                 st.session_state.last_msa_params = current_msa_params
@@ -110,9 +114,11 @@ def msa_section(sequences, seq_type):
 
             with tabs[0]:
                 st.subheader("📄 MSA Result")
-                seqs_total, _ = parse_sequences_from_text(st.session_state.msa_result)
-                if seqs_total:
-                    st.write(f"Total sequences: {len(seqs_total)}. MSA length: {len(seqs_total[0].seq)}")
+                try:
+                    _aln = AlignIO.read(StringIO(st.session_state.msa_result), msa_output_format)
+                    st.write(f"Total sequences: {len(_aln)}. MSA length: {_aln.get_alignment_length()}")
+                except ValueError:
+                    pass
 
                 if st.session_state.msa_image is not None and st.session_state.msa_letters is not None:
                     plot_msa_image(st.session_state.msa_image, st.session_state.msa_letters, plot_method)
@@ -121,7 +127,7 @@ def msa_section(sequences, seq_type):
                     label="📥 Download MSA",
                     data=st.session_state.msa_result,
                     file_name=f"msa_alignment.{msa_output_format}",
-                    mime=f"text/{msa_output_format}"
+                    mime="text/plain"
                 )
 
             with tabs[1]:
@@ -165,7 +171,7 @@ def msa_section(sequences, seq_type):
                     if recalculate:
                         with st.spinner("Calculating consensus..."):
                             alignment = AlignIO.read(StringIO(st.session_state.msa_result), msa_output_format)
-                            consensus_record, closest_record, min_diff, closest_seq_id = calculate_representative_sequence(alignment, threshold=consensus_threshold)
+                            consensus_record, closest_record, min_diff, closest_seq_id = calculate_representative_sequence(alignment, threshold=consensus_threshold, seq_type=seq_type)
                             st.session_state.consensus_data = {
                                 'threshold': consensus_threshold,
                                 'consensus_record': consensus_record,
@@ -211,168 +217,105 @@ def msa_section(sequences, seq_type):
                 if 'msa_tree' in st.session_state and st.session_state.msa_tree:
                     phylogenetic_tree_section(st.session_state.msa_tree)
 
+class MSAError(RuntimeError):
+    """Raised when the multiple sequence alignment cannot be computed or written."""
+
+
+MSA_OUTPUT_FORMATS = ("fasta", "clustal", "phylip-relaxed", "stockholm")
+
+
+def run_msa(pairs, seq_type):
+    """Align (id, sequence) pairs with FAMSA and return [(id, aligned_sequence)]."""
+    cleaned = [(seq_id, clean_sequence(seq, seq_type).replace("*", "")) for seq_id, seq in pairs]
+    empty = [seq_id for seq_id, seq in cleaned if not seq]
+    if empty:
+        raise MSAError(f"Sequences empty after cleaning: {', '.join(empty)}")
+    if len(cleaned) < 2:
+        raise MSAError("At least two sequences are required for an MSA.")
+    famsa_input = [PyFAMSASequence(seq_id.encode(), seq.encode()) for seq_id, seq in cleaned]
+    try:
+        msa = PyFAMSAAligner(guide_tree="upgma").align(famsa_input)
+    except Exception as e:
+        raise MSAError(f"FAMSA failed: {e}") from e
+    return [(s.id.decode(), s.sequence.decode()) for s in msa]
+
+
+def serialize_alignment(aligned_pairs, output_format):
+    """Write aligned (id, sequence) pairs in an alignment format."""
+    records = [SeqRecord(Seq(seq), id=seq_id, description="") for seq_id, seq in aligned_pairs]
+    out = StringIO()
+    try:
+        SeqIO.write(records, out, output_format)
+    except ValueError as e:
+        raise MSAError(f"Could not write the alignment as {output_format}: {e}") from e
+    return out.getvalue()
+
+
+def mutations_from_alignment(aligned_pairs, reference_id):
+    """Substitutions of every sequence relative to the reference, in reference coordinates."""
+    aligned = dict(aligned_pairs)
+    if reference_id not in aligned:
+        raise MSAError(f"Reference sequence '{reference_id}' not found in the alignment.")
+    ref = aligned[reference_id].upper()
+    mutations = {}
+    for seq_id, seq in aligned_pairs:
+        if seq_id == reference_id:
+            continue
+        seq = seq.upper()
+        seq_mutations = []
+        ref_position = 0
+        for ref_base, seq_base in zip(ref, seq):
+            if ref_base != '-':
+                ref_position += 1
+            if ref_base != seq_base and ref_base != '-' and seq_base != '-':
+                seq_mutations.append((ref_position, ref_base, seq_base))
+        mutations[seq_id] = seq_mutations
+    return mutations
+
+
 def perform_msa(sequences, reference_id, seq_type, output_format):
     """
-    Perform Multiple Sequence Alignment using pyFAMSA and report mutations relative to the reference sequence.
+    Align SeqRecords with FAMSA and report mutations relative to the reference.
 
-    Parameters:
-        sequences: List of sequence records to align
-        reference_id (str): ID of the reference sequence for mutation detection
-        seq_type (str): Type of sequences ('DNA' or 'Protein')
-        output_format (str): Format for the MSA output
-
-    Returns:
-        tuple: (msa_text, mutations) - MSA text and dictionary of mutations per sequence
+    Returns (msa_text, mutations). Raises MSAError on failure.
     """
-    try:
-        pyfamsa_sequences = [
-            PyFAMSASequence(seq.id.encode(), str(seq.seq).encode()) for seq in sequences
-        ]
-        aligner = PyFAMSAAligner(guide_tree="upgma")
-        msa = aligner.align(pyfamsa_sequences)
-        aligned_seq_records = [
-            SeqRecord(
-                Seq(seq.sequence.decode()),
-                id=seq.id.decode(),
-                description=""
-            )
-            for seq in msa
-        ]
-        msa_io = StringIO()
-        SeqIO.write(aligned_seq_records, msa_io, output_format)
-        msa_text = msa_io.getvalue()
-        # Get reference sequence from aligned records
-        ref_seq = next((seq for seq in aligned_seq_records if seq.id == reference_id), None)
-        if not ref_seq:
-            st.error("Reference sequence not found in MSA results.")
-            return msa_text, {}
-        mutations = {}
-        for seq in aligned_seq_records:
-            if seq.id == reference_id:
-                continue
-            seq_mutations = []
-            ref_position = 0
-            for i, (ref_base, seq_base) in enumerate(zip(ref_seq.seq, seq.seq), start=1):
-                if ref_base != '-':
-                    ref_position += 1
-                # Report mutation only if both residues are not gaps.
-                if ref_base != seq_base and ref_base != '-' and seq_base != '-':
-                    seq_mutations.append((ref_position, ref_base, seq_base))
-            mutations[seq.id] = seq_mutations
-        return msa_text, mutations
-    except Exception as e:
-        st.error(f"An error occurred during MSA: {e}")
-        print(traceback.format_exc())
-        return "", {}
+    aligned = run_msa([(s.id, str(s.seq)) for s in sequences], seq_type)
+    return serialize_alignment(aligned, output_format), mutations_from_alignment(aligned, reference_id)
 
-def calculate_representative_sequence(alignment, threshold=0.7):
+
+def calculate_representative_sequence(alignment, threshold=0.7, seq_type="Protein"):
     """
-    Calculate the consensus sequence and find the most representative sequence in the alignment.
+    Consensus sequence and the alignment member closest to it.
 
-    Parameters:
-        alignment: Biopython Alignment object
-        threshold (float): Consensus threshold (default: 0.7)
+    Columns whose most frequent symbol is a gap are left out of the exported consensus.
+    Columns below `threshold` get the ambiguity code (N for DNA, X for protein) and are not
+    counted as differences when choosing the most representative sequence.
 
     Returns:
         tuple: (consensus_record, closest_record, min_differences, closest_seq_id)
     """
-    # Calculate the consensus sequence
-    consensus_seq_list = []
-    length = alignment.get_alignment_length()
-    for i in range(length):
-        column = alignment[:, i]
-        counts = {}
-        for char in column:
-            counts[char] = counts.get(char, 0) + 1
+    ambiguous = "N" if seq_type == "DNA" else "X"
+    seqs = [str(record.seq).upper() for record in alignment]
+    n_seqs = len(seqs)
 
-        max_count = 0
-        most_freq = 'X'
-        for char, count in counts.items():
-            if count > max_count:
-                max_count = count
-                most_freq = char
+    consensus_aligned = []
+    for i in range(alignment.get_alignment_length()):
+        char, count = Counter(s[i] for s in seqs).most_common(1)[0]
+        consensus_aligned.append(char if count / n_seqs >= threshold else ambiguous)
+    consensus_aligned = "".join(consensus_aligned)
 
-        if max_count / len(column) >= threshold:
-            consensus_seq_list.append(most_freq)
-        else:
-            consensus_seq_list.append('X')
+    def count_differences(seq):
+        return sum(1 for c, s in zip(consensus_aligned, seq) if c != ambiguous and c != s)
 
-    consensus_seq = "".join(consensus_seq_list)
+    closest_index = min(range(n_seqs), key=lambda k: count_differences(seqs[k]))
+    closest_record_src = alignment[closest_index]
+    min_differences = count_differences(seqs[closest_index])
 
-    # Find the sequence closest to the consensus
-    def count_differences(seq1, seq2):
-        """Count the number of differences between two sequences."""
-        return sum(1 for a, b in zip(seq1, seq2) if a != b)
-
-    min_differences = None
-    closest_sequence = None
-    closest_seq_id = None
-
-    for record in alignment:
-        seq = str(record.seq)
-        differences = count_differences(consensus_seq, seq)
-
-        if (min_differences is None) or (differences < min_differences):
-            min_differences = differences
-            closest_sequence = seq
-            closest_seq_id = record.id
-
-    # Create SeqRecord objects
-    consensus_record = SeqRecord(Seq(consensus_seq), id="Consensus", description="Consensus sequence")
-    closest_record = SeqRecord(Seq(closest_sequence), id=closest_seq_id, description="Most representative sequence")
-
-    return consensus_record, closest_record, min_differences, closest_seq_id
-
-def save_msa_to_fasta(msa: List[PyFAMSASequence], output_path: str) -> bool:
-    """
-    Converts pyFAMSA MSA output to a FASTA file compatible with Biopython.
-
-    Parameters:
-        msa (List[PyFAMSASequence]): List of aligned sequences from pyFAMSA
-        output_path (str): Path to save the FASTA file
-
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    try:
-        seq_records = []
-        for seq in msa:
-            seq_id = seq.id.decode('utf-8')
-            sequence = seq.sequence.decode('utf-8')
-            record = SeqRecord(Seq(sequence), id=seq_id, description="")
-            seq_records.append(record)
-        SeqIO.write(seq_records, output_path, "fasta")
-        print(f"MSA successfully saved to {output_path}")
-        return True
-    except Exception as e:
-        print(f"An error occurred while saving MSA to FASTA: {e}")
-        return False
-
-
-def get_msa_as_fasta(msa: List[PyFAMSASequence]) -> str:
-    """
-    Converts pyFAMSA MSA output to a FASTA-formatted string compatible with Biopython.
-
-    Parameters:
-        msa (List[PyFAMSASequence]): List of aligned sequences from pyFAMSA
-
-    Returns:
-        str: FASTA-formatted string
-    """
-    try:
-        seq_records = []
-        for seq in msa:
-            seq_id = seq.id.decode('utf-8')
-            sequence = seq.sequence.decode('utf-8')
-            record = SeqRecord(Seq(sequence), id=seq_id, description="")
-            seq_records.append(record)
-        fasta_io = StringIO()
-        SeqIO.write(seq_records, fasta_io, "fasta")
-        fasta_content = fasta_io.getvalue()
-        return fasta_content
-    except Exception as e:
-        st.error(f"An error occurred while converting MSA to FASTA: {e}")
-        return ""
+    consensus_record = SeqRecord(Seq(consensus_aligned.replace("-", "")), id="Consensus",
+                                 description="Consensus sequence")
+    closest_record = SeqRecord(Seq(str(closest_record_src.seq).replace("-", "")),
+                               id=closest_record_src.id, description="Most representative sequence")
+    return consensus_record, closest_record, min_differences, closest_record_src.id
 
 def convert_msa_mutations_to_csv(mutations: Dict[str, List[Tuple[int, str, str]]]) -> str:
     """

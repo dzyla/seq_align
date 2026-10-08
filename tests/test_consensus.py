@@ -28,5 +28,17 @@ class TestConsensusFix(unittest.TestCase):
         self.assertEqual(min_diff, 0)
         self.assertIn(closest_id, ["seq1", "seq2"])
 
+    def test_consensus_dna_uses_n_and_drops_gap_columns(self):
+        alignment = MultipleSeqAlignment([
+            SeqRecord(Seq("A-CT"), id="s1"),
+            SeqRecord(Seq("A-CA"), id="s2"),
+            SeqRecord(Seq("AGCG"), id="s3"),
+        ])
+        consensus, closest, min_diff, closest_id = calculate_representative_sequence(
+            alignment, threshold=0.6, seq_type="DNA")
+        self.assertEqual(str(consensus.seq), "ACN")     # gap-majority column removed, ambiguous -> N
+        self.assertEqual(min_diff, 0)                    # N columns are not counted as differences
+        self.assertNotIn("-", str(closest.seq))
+
 if __name__ == '__main__':
     unittest.main()

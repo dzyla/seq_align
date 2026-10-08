@@ -10,7 +10,7 @@ import io
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from modules.msa import perform_msa
+from modules.msa import MSAError, perform_msa
 from modules.pairwise import get_aligner, calculate_alignment_score
 from modules.viz import msa_to_image, plot_msa_image
 
@@ -58,9 +58,11 @@ def sequence_clustering_section(sequences, seq_type):
     if method == "Fast (MSA-based)":
         if st.button("Run/Update MSA"):
             with st.spinner("Calculating MSA..."):
-                msa_text, _ = perform_msa(sequences, sequences[0].id, seq_type, "fasta")
-                if msa_text:
+                try:
+                    msa_text, _ = perform_msa(sequences, sequences[0].id, seq_type, "fasta")
                     st.session_state.clustering_msa = msa_text
+                except MSAError as e:
+                    st.error(str(e))
 
         if st.session_state.clustering_msa:
             st.success("MSA calculated.")
