@@ -31,8 +31,9 @@ def _load_once(key, loader, state=None):
     """Run `loader` only when the input identity `key` changes; otherwise reuse its cached result."""
     state = st.session_state if state is None else state
     if state.get("input_key") != key:
+        result = loader()
+        state["input_cache"] = result
         state["input_key"] = key
-        state["input_cache"] = loader()
     return state["input_cache"]
 
 
@@ -45,6 +46,21 @@ def _clear_structures(state=None):
         state["input_cache"] = None
 
 
+def _unique_name(name, existing):
+    """Return `name`, or `name` with _2, _3, ... before the extension, so it is not in `existing`."""
+    if name not in existing:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, ""
+    n = 2
+    while True:
+        candidate = f"{stem}_{n}{dot}{ext}"
+        if candidate not in existing:
+            return candidate
+        n += 1
+
+
 def _load_structures(files, input_format, all_models):
     records, errors, store = [], [], {}
     for f in files:
@@ -53,7 +69,8 @@ def _load_structures(files, input_format, all_models):
             errors.append(f"{f.name}: {err}")
         else:
             records.extend(seqs)
-        store[f.name] = StructureFile(name=f.name, data=f.getvalue(), fmt=input_format)
+        name = _unique_name(f.name, store)
+        store[name] = StructureFile(name=name, data=f.getvalue(), fmt=input_format)
     st.session_state.structures = store
     return (make_unique_ids(records) if records else None), ("\n".join(errors) or None)
 

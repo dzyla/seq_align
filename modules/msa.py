@@ -143,12 +143,18 @@ def msa_section(sequences, seq_type):
         if st.button("Calculate Phylogenetic Tree from MSA"):
             with st.spinner("Building tree from MSA..."):
                 try:
-                    st.session_state.msa_tree = build_tree_from_alignment(
+                    tree = build_tree_from_alignment(
                         aligned_to_msa(aligned), seq_type, TREE_METHODS[tree_method], correction)
+                    st.session_state.msa_tree = {
+                        "params": {"method": tree_method, "correction": correction}, "tree": tree}
                 except TreeError as e:
                     st.error(str(e))
-        if st.session_state.get('msa_tree'):
-            phylogenetic_tree_section(st.session_state.msa_tree)
+        stored = st.session_state.get('msa_tree')
+        if stored:
+            if stored["params"] != {"method": tree_method, "correction": correction}:
+                stale_notice()
+            else:
+                phylogenetic_tree_section(stored["tree"])
 
 
 class MSAError(RuntimeError):

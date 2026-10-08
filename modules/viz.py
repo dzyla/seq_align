@@ -80,7 +80,7 @@ def msa_figure_plotly(codes, ids, seq_type, hover=True):
     fig.update_layout(
         title="Multiple Sequence Alignment",
         xaxis_title="Alignment position",
-        yaxis=dict(autorange="reversed", showticklabels=len(ids) <= 60),
+        yaxis=dict(type="category", autorange="reversed", showticklabels=len(ids) <= 60),
         height=min(900, 200 + 14 * len(ids)),
         plot_bgcolor="white",
     )

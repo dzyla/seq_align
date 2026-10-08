@@ -65,3 +65,26 @@ def test_clear_structures_noop_when_already_empty():
     app._clear_structures(state)
     assert state["input_key"] == ("text", "h")
     assert state["input_cache"] == ("x", None)
+
+
+def test_load_once_failing_loader_keeps_previous_key():
+    import pytest
+    import app
+    state = {}
+    app._load_once("k1", lambda: ("one", None), state)
+
+    def boom():
+        raise RuntimeError("x")
+
+    with pytest.raises(RuntimeError):
+        app._load_once("k2", boom, state)
+    assert state["input_key"] == "k1"
+    assert app._load_once("k1", boom, state) == ("one", None)
+
+
+def test_unique_name():
+    import app
+    assert app._unique_name("x.pdb", set()) == "x.pdb"
+    assert app._unique_name("x.pdb", {"x.pdb"}) == "x_2.pdb"
+    assert app._unique_name("x.pdb", {"x.pdb", "x_2.pdb"}) == "x_3.pdb"
+    assert app._unique_name("noext", {"noext"}) == "noext_2"

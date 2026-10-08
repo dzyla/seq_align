@@ -68,3 +68,9 @@ def test_matplotlib_legend_is_compact_and_figure_is_tall_enough():
     assert len(legend.get_texts()) < len(np.unique(codes))
     assert fig.get_size_inches()[1] >= 3.5
     plt.close(fig)
+
+
+def test_plotly_y_axis_is_categorical_for_numeric_ids():
+    from modules.viz import alignment_to_codes, msa_figure_plotly
+    fig = msa_figure_plotly(alignment_to_codes(["MK", "ML", "MV"]), ["1", "2", "10"], "Protein")
+    assert fig.layout.yaxis.type == "category"
