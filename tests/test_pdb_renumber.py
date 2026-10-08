@@ -135,5 +135,26 @@ class TestRenumberingClashes(unittest.TestCase):
         self.assertEqual(out.xtra.get("renumber_notes", []), [])
 
 
+class TestRenumberOverrides(unittest.TestCase):
+    def setUp(self):
+        self.structure = _structure(_pdb([("ATOM", "ALA", 1, " "), ("ATOM", "CYS", 2, " "), ("ATOM", "GLY", 3, " ")]))
+        self.targets = [SeqRecord(Seq("MACG"), id="best"), SeqRecord(Seq("WWWWACG"), id="other")]
+
+    def test_default_picks_best(self):
+        mappings, _, _ = prepare_renumbering(self.structure, self.targets)
+        self.assertEqual(mappings["A"], {0: 2, 1: 3, 2: 4})
+
+    def test_override_other_target(self):
+        mappings, _, _ = prepare_renumbering(self.structure, self.targets, overrides={"A": "other"})
+        self.assertEqual(mappings["A"], {0: 5, 1: 6, 2: 7})
+
+    def test_override_skip_chain(self):
+        from modules.pdb_renumber import SKIP
+        mappings, logs, _ = prepare_renumbering(self.structure, self.targets, overrides={"A": SKIP})
+        self.assertNotIn("A", mappings)
+        out = apply_renumbering(self.structure, mappings)
+        self.assertEqual([r.id[1] for r in out[0]["A"]], [1, 2, 3])
+
+
 if __name__ == '__main__':
     unittest.main()

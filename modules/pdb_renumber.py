@@ -89,44 +89,58 @@ def plan_residue_numbers(n_residues, mapping):
     return numbers
 
 
-def prepare_renumbering(structure: Structure, target_sequences: list):
-    """Choose the best target for each chain of the first model and compute its mapping.
+SKIP = "(keep original numbering)"
 
-    Returns (mappings: {chain_id: {residue_index: target_pos}}, log messages, alignment visuals).
-    """
-    log_messages, alignment_visuals, mappings = [], [], {}
-    model = next(iter(structure))
-    for chain in model:
-        residues = polymer_residues(chain)
-        chain_seq = chain_sequence(residues)
+
+def score_targets(structure, target_sequences):
+    """Align every protein chain of the first model to every target; candidates sorted best-first."""
+    candidates = {}
+    for chain in next(iter(structure)):
+        chain_seq = chain_sequence(polymer_residues(chain))
         if not chain_seq or set(chain_seq) == {"X"}:
-            log_messages.append(f"Chain {chain.id}: no protein residues found, skipping.")
             continue
-
-        best = None
+        rows = []
         for target in target_sequences:
             aligned_t, aligned_c, identity = align_target_to_chain(str(target.seq), chain_seq)
             matches = sum(1 for a, b in zip(aligned_t, aligned_c) if a == b and a != '-')
-            if best is None or matches > best[0]:
-                best = (matches, identity, target, aligned_t, aligned_c)
-        if best is None:
-            log_messages.append(f"Chain {chain.id}: no target sequences provided.")
-            continue
+            rows.append({"target_id": target.id, "matches": matches, "identity": identity,
+                         "aligned_t": aligned_t, "aligned_c": aligned_c})
+        rows.sort(key=lambda r: (r["matches"], r["identity"]), reverse=True)
+        candidates[chain.id] = rows
+    return candidates
 
-        matches, identity, target, aligned_t, aligned_c = best
-        mapping = get_mapping_from_alignment(aligned_t, aligned_c)
-        if not mapping:
-            log_messages.append(f"Chain {chain.id}: no residues aligned to {target.id}, skipping.")
+
+def build_mappings(candidates, overrides=None):
+    """Mappings, log messages and alignment visuals from scored candidates and optional overrides."""
+    overrides = overrides or {}
+    mappings, logs, visuals = {}, [], []
+    for chain_id, rows in candidates.items():
+        if not rows:
+            logs.append(f"Chain {chain_id}: no target sequences provided.")
             continue
-        mappings[chain.id] = mapping
-        alignment_visuals.append((chain.id, target.id,
-                                  f"Target ({target.id}): {aligned_t}\nChain  ({chain.id})       : {aligned_c}"))
-        message = (f"Chain {chain.id}: best match is {target.id} with {matches} identical residues "
-                   f"({identity:.1%} identity over aligned columns).")
-        if identity < 0.5:
+        choice = overrides.get(chain_id)
+        if choice == SKIP:
+            logs.append(f"Chain {chain_id}: kept original numbering (excluded by user).")
+            continue
+        row = next((r for r in rows if r["target_id"] == choice), rows[0])
+        mapping = get_mapping_from_alignment(row["aligned_t"], row["aligned_c"])
+        if not mapping:
+            logs.append(f"Chain {chain_id}: no residues aligned to {row['target_id']}, skipping.")
+            continue
+        mappings[chain_id] = mapping
+        visuals.append((chain_id, row["target_id"],
+                        f"Target ({row['target_id']}): {row['aligned_t']}\nChain  ({chain_id})       : {row['aligned_c']}"))
+        message = (f"Chain {chain_id}: {'selected' if choice else 'best match is'} {row['target_id']} with "
+                   f"{row['matches']} identical residues ({row['identity']:.1%} identity over aligned columns).")
+        if row["identity"] < 0.5:
             message += " ⚠️ Low identity: check that this is the right target."
-        log_messages.append(message)
-    return mappings, log_messages, alignment_visuals
+        logs.append(message)
+    return mappings, logs, visuals
+
+
+def prepare_renumbering(structure: Structure, target_sequences: list, overrides=None):
+    """Backward-compatible: score all targets, then build mappings honouring overrides."""
+    return build_mappings(score_targets(structure, target_sequences), overrides)
 
 
 def apply_renumbering(structure: Structure, mappings: dict):
@@ -212,22 +226,33 @@ def pdb_renumber_section(structures):
     if st.session_state.get('pdb_renumber_hash') != key:
         with st.spinner("Matching chains to target sequences..."):
             try:
-                mappings, logs, visuals = prepare_renumbering(parse_structure(structure_file), target_sequences)
+                st.session_state.pdb_renumber_results = {
+                    "candidates": score_targets(parse_structure(structure_file), target_sequences)}
             except Exception as e:
                 st.error(f"An error occurred: {e}")
                 st.text(traceback.format_exc())
                 return
-            st.session_state.pdb_renumber_results = {'mappings': mappings, 'logs': logs, 'visuals': visuals}
             st.session_state.pdb_renumber_hash = key
 
-    results = st.session_state.pdb_renumber_results
+    candidates = st.session_state.pdb_renumber_results["candidates"]
     st.subheader("Interactive Review & Confirmation")
+    overrides = {}
+    for chain_id, rows in candidates.items():
+        labels = {r["target_id"]: f"{r['target_id']} — {r['identity']:.1%} identity, {r['matches']} identical"
+                  for r in rows}
+        options = [r["target_id"] for r in rows] + [SKIP]
+        overrides[chain_id] = st.selectbox(f"Chain {chain_id} target", options,
+                                           format_func=lambda v, labels=labels: labels.get(v, v),
+                                           key=f"renumber_target_{chain_id}")
+    mappings, logs, visuals = build_mappings(candidates, overrides)
+    results = {"mappings": mappings}
+
     with st.expander("Review Sequence Alignments (PDB vs Target)", expanded=True):
-        for chain_id, target_id, aln_text in results['visuals']:
+        for chain_id, target_id, aln_text in visuals:
             st.markdown(f"**Chain {chain_id}** matched to **{target_id}**")
             st.text(aln_text)
     with st.expander("Renumbering Logs", expanded=True):
-        for msg in results['logs']:
+        for msg in logs:
             st.write(msg)
 
     is_cif = structure_file.fmt == "mmCIF"
