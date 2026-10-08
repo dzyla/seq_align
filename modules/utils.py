@@ -55,6 +55,7 @@ def init_session_state():
         "input_key": None,
         "input_cache": None,
         "structures": {},
+        "fetched": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:

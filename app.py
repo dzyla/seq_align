@@ -8,12 +8,14 @@ from modules.antibody import antibody_prediction_section
 from modules.best_match import best_match_finder_section
 from modules.clustering import sequence_clustering_section
 from modules.conversion import format_conversion_section
+from modules.fetch import FETCH_SOURCES, FetchError, fetch_any, parse_id_list
 from modules.dna import dna_translation_section
 from modules.msa import msa_section
 from modules.navigation import available_analyses
 from modules.pairwise import pairwise_alignment_section
 from modules.parsers import (
     make_unique_ids, parse_sequences_from_file, parse_sequences_from_structure, parse_sequences_from_text,
+    parse_structure_text,
 )
 from modules.pdb_renumber import pdb_renumber_section
 from modules.phylogeny import TREE_METHODS, TreeError, build_phylogenetic_tree, phylogenetic_tree_section
@@ -22,7 +24,7 @@ from modules.seqtools import detect_seq_type, fingerprint
 from modules.structures import STRUCTURE_FORMATS, StructureFile
 from modules.utils import get_file_extensions, init_session_state, reset_all_results, stale_notice, track_dataset
 
-INPUT_FORMATS = ("Text (FASTA)", "FASTA", "Clustal", "GenBank", "Newick", "PDB", "mmCIF")
+INPUT_FORMATS = ("Text (FASTA)", "Fetch by ID", "FASTA", "Clustal", "GenBank", "Newick", "PDB", "mmCIF")
 
 
 def _digest(data: bytes) -> str:
@@ -77,6 +79,21 @@ def _load_structures(files, input_format, all_models):
     return (make_unique_ids(records) if records else None), ("\n".join(errors) or None)
 
 
+def _load_fetched(result):
+    if result.fasta:
+        st.session_state.structures = {}
+        return parse_sequences_from_text(result.fasta)
+    records, errors = [], []
+    for sf in result.structures:
+        seqs, err = parse_structure_text(sf.text, sf.name, sf.fmt)
+        if err:
+            errors.append(f"{sf.name}: {err}")
+        else:
+            records.extend(seqs)
+    st.session_state.structures = {sf.name: sf for sf in result.structures}
+    return (make_unique_ids(records) if records else None), ("\n".join(errors) or None)
+
+
 def _read_newick(uploaded):
     try:
         return Phylo.read(StringIO(uploaded.getvalue().decode("utf-8")), "newick"), None
@@ -87,7 +104,7 @@ def _read_newick(uploaded):
 def handle_input(input_format):
     """Return (sequences, tree) for the current sidebar input. Parsing reruns only when content changes."""
     result, error = None, None
-    if input_format not in STRUCTURE_FORMATS:
+    if input_format not in STRUCTURE_FORMATS and input_format != "Fetch by ID":
         _clear_structures()
 
     if input_format == "Text (FASTA)":
@@ -99,6 +116,20 @@ def handle_input(input_format):
         if seq_text:
             result, error = _load_once(("text", _digest(seq_text.encode())),
                                        lambda: parse_sequences_from_text(seq_text))
+    elif input_format == "Fetch by ID":
+        source = st.sidebar.selectbox("Database", FETCH_SOURCES, key="fetch_source")
+        ids_text = st.sidebar.text_input("ID(s)", key="fetch_ids",
+                                         placeholder="e.g. P69905, P68871  or  1CRN",
+                                         help="Separate several IDs with commas or spaces.")
+        if st.sidebar.button("Fetch", key="fetch_button"):
+            try:
+                with st.spinner(f"Fetching from {source}..."):
+                    st.session_state.fetched = fetch_any(source, parse_id_list(ids_text))
+            except FetchError as e:
+                st.sidebar.error(str(e))
+        fetched = st.session_state.get("fetched")
+        if fetched:
+            result, error = _load_once(("fetch", fetched.digest), lambda: _load_fetched(fetched))
     elif input_format in STRUCTURE_FORMATS:
         all_models = st.sidebar.checkbox("Extract all models (NMR ensembles)", value=False)
         files = st.sidebar.file_uploader(

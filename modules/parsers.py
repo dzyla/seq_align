@@ -99,18 +99,10 @@ def make_unique_ids(records):
     return unique
 
 
-def parse_sequences_from_structure(file, format_name, all_models=False):
-    """
-    Extract one protein sequence per chain from a PDB or mmCIF upload.
-
-    Only the first model is used unless all_models is True (NMR ensembles).
-    Returns (records, None) or (None, error message).
-    """
+def parse_structure_text(text, name, format_name, all_models=False):
+    """Extract one protein sequence per chain from PDB/mmCIF text. Returns (records, error)."""
     try:
-        file.seek(0)
-        raw = file.read()
-        text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
-        base = os.path.splitext(os.path.basename(file.name))[0]
+        base = os.path.splitext(os.path.basename(name))[0]
         if format_name == "PDB":
             parser = PDBParser(QUIET=True)
         elif format_name == "mmCIF":
@@ -118,7 +110,6 @@ def parse_sequences_from_structure(file, format_name, all_models=False):
         else:
             return None, f"Unsupported format: {format_name}"
         structure = parser.get_structure(base, StringIO(text))
-
         models = list(structure) if all_models else list(structure)[:1]
         multi = len(models) > 1
         sequences = []
@@ -130,11 +121,20 @@ def parse_sequences_from_structure(file, format_name, all_models=False):
                     continue  # empty, nucleic acid, or unknown polymer
                 chain_label = chain.id.strip() or "_"
                 seq_id = f"{base}_m{model_idx}_{chain_label}" if multi else f"{base}_{chain_label}"
-                description = f"Chain {chain_label} from {file.name}" + (f", model {model_idx}" if multi else "")
-                sequences.append(SeqRecord(Seq("".join(letters)), id=seq_id, description=description))
-
+                description = f"Chain {chain_label} from {name}" + (f", model {model_idx}" if multi else "")
+                record = SeqRecord(Seq("".join(letters)), id=seq_id, description=description)
+                record.annotations["structure"] = {"file": name, "chain": chain.id, "model": model_idx}
+                sequences.append(record)
         if not sequences:
             return None, "No protein sequences could be extracted from the structure file."
         return make_unique_ids(sequences), None
     except Exception as e:
         return None, f"An error occurred while parsing the {format_name} file: {e}"
+
+
+def parse_sequences_from_structure(file, format_name, all_models=False):
+    """File-upload wrapper around parse_structure_text (first model only unless all_models)."""
+    file.seek(0)
+    raw = file.read()
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+    return parse_structure_text(text, file.name, format_name, all_models)

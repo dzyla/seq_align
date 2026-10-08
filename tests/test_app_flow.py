@@ -108,3 +108,25 @@ def test_analysis_falls_back_when_unavailable():
     at.selectbox(key="seq_type_select").select("Protein").run()
     assert not at.exception
     assert at.selectbox(key="analysis_select").value != "Translate DNA"
+
+
+def test_fetch_pdb_offers_structure_tools(monkeypatch):
+    import pathlib
+    import modules.fetch as fetch
+
+    data = (pathlib.Path(__file__).parent / "data" / "1crn.cif").read_bytes()
+
+    class R:
+        status_code = 200
+        content = data
+        text = data.decode()
+
+    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: R())
+    at = AppTest.from_file("app.py", default_timeout=60)
+    at.run()
+    at.selectbox(key="input_format").select("Fetch by ID").run()
+    at.selectbox(key="fetch_source").select("PDB (structure)").run()
+    at.text_input(key="fetch_ids").input("1CRN").run()
+    at.button(key="fetch_button").click().run()
+    assert not at.exception
+    assert "PDB Residue Renumbering" in at.selectbox(key="analysis_select").options
