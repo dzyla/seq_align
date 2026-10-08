@@ -2,7 +2,7 @@ import streamlit as st
 import re
 import pandas as pd
 import plotly.graph_objects as go
-from modules.pairwise import get_aligner, perform_pairwise_alignment, calculate_alignment_score
+from modules.pairwise import get_aligner, perform_pairwise_alignment, calculate_alignment_score, DEFAULT_OPEN_GAP, DEFAULT_EXTEND_GAP
 
 def best_match_finder_section(sequences, seq_type):
     """
@@ -53,13 +53,13 @@ def best_match_finder_section(sequences, seq_type):
     c1, c2 = st.columns(2)
     open_gap_score = c1.number_input(
         "Open Gap Score",
-        value=-0.5,
+        value=DEFAULT_OPEN_GAP,
         step=0.1,
         help="Penalty for opening a gap."
     )
     extend_gap_score = c2.number_input(
         "Extend Gap Score",
-        value=-0.1,
+        value=DEFAULT_EXTEND_GAP,
         step=0.1,
         help="Penalty for extending a gap."
     )

@@ -8,6 +8,17 @@ from io import StringIO
 import traceback
 import re
 from modules.utils import have_params_changed
+from modules.seqtools import clean_sequence
+from functools import lru_cache
+
+DEFAULT_OPEN_GAP = -10.0
+DEFAULT_EXTEND_GAP = -0.5
+
+
+@lru_cache(maxsize=None)
+def load_matrix(name):
+    """Load a substitution matrix once per process."""
+    return substitution_matrices.load(name)
 
 def pairwise_alignment_section(sequences, seq_type):
     """
@@ -99,14 +110,14 @@ def pairwise_alignment_section(sequences, seq_type):
     c1, c2 = st.columns(2)
     open_gap_score = c1.number_input(
         "Open Gap Score",
-        value=-0.5,
+        value=DEFAULT_OPEN_GAP,
         step=0.1,
         help="Penalty for opening a gap in the alignment. More negative = higher penalty."
     )
 
     extend_gap_score = c2.number_input(
         "Extend Gap Score",
-        value=-0.1,
+        value=DEFAULT_EXTEND_GAP,
         step=0.1,
         help="Penalty for extending an existing gap. More negative = higher penalty."
     )
@@ -201,7 +212,7 @@ def pairwise_alignment_section(sequences, seq_type):
             mime="text/plain"
         )
 
-def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-0.1, is_circular1=False, is_circular2=False):
+def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP, extend_gap_score=DEFAULT_EXTEND_GAP, is_circular1=False, is_circular2=False):
     """
     Perform pairwise alignment using Biopython's Align.PairwiseAligner.
 
@@ -219,15 +230,8 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
         tuple: (alignment_text, mutations) - Formatted alignment text and list of mutations
     """
     try:
-        # Clean sequences by converting to uppercase and removing invalid characters
-        if seq_type == "DNA":
-            valid_chars = set('ATGCNRYKMSWBDHV')
-        else:  # Protein
-            valid_chars = set('ACDEFGHIKLMNPQRSTVWYBXZJUO')
-
-        # Clean the sequences by removing invalid characters
-        seq1_str = ''.join(c.upper() for c in str(seq1.seq) if c.upper() in valid_chars or c == '-')
-        seq2_str = ''.join(c.upper() for c in str(seq2.seq) if c.upper() in valid_chars or c == '-')
+        seq1_str = clean_sequence(seq1.seq, seq_type)
+        seq2_str = clean_sequence(seq2.seq, seq_type)
 
         if not seq1_str or not seq2_str:
              return "One or both sequences are empty after cleaning.", []
@@ -304,7 +308,7 @@ def perform_pairwise_alignment(seq1, seq2, seq_type, mode="global", open_gap_sco
         print(traceback.format_exc())
         return error_msg, []
 
-def get_aligner(seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-0.1):
+def get_aligner(seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP, extend_gap_score=DEFAULT_EXTEND_GAP):
     """
     Configure and return a PairwiseAligner.
 
@@ -318,19 +322,16 @@ def get_aligner(seq_type, mode="global", open_gap_score=-0.5, extend_gap_score=-
         Align.PairwiseAligner: Configured aligner object
     """
     aligner = Align.PairwiseAligner()
-
-    if seq_type == "DNA":
-        aligner.substitution_matrix = substitution_matrices.load("NUC.4.4")
-    else:
-        aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
-
+    aligner.substitution_matrix = load_matrix("NUC.4.4" if seq_type == "DNA" else "BLOSUM62")
     aligner.open_gap_score = open_gap_score
     aligner.extend_gap_score = extend_gap_score
 
     if mode == "overlap":
+        # Global alignment with free end gaps (semi-global). Must be set after the
+        # general gap scores, which also overwrite the end-gap scores.
         aligner.mode = "global"
-        aligner.open_end_gap_score = 0.0
-        aligner.extend_end_gap_score = 0.0
+        aligner.end_open_gap_score = 0.0
+        aligner.end_extend_gap_score = 0.0
     else:
         aligner.mode = mode
 
@@ -350,21 +351,16 @@ def calculate_alignment_score(aligner, seq1, seq2, seq_type):
     Returns:
         float: Alignment score or None if sequences are empty
     """
-    if seq_type == "DNA":
-        valid_chars = set('ATGCNRYKMSWBDHV')
-    else:  # Protein
-        valid_chars = set('ACDEFGHIKLMNPQRSTVWYBXZJUO')
-
     s1_str = str(seq1.seq) if hasattr(seq1, 'seq') else str(seq1)
     s2_str = str(seq2.seq) if hasattr(seq2, 'seq') else str(seq2)
 
-    seq1_clean = ''.join(c.upper() for c in s1_str if c.upper() in valid_chars or c == '-')
-    seq2_clean = ''.join(c.upper() for c in s2_str if c.upper() in valid_chars or c == '-')
+    seq1_clean = clean_sequence(s1_str, seq_type)
+    seq2_clean = clean_sequence(s2_str, seq_type)
 
     if not seq1_clean or not seq2_clean:
         return None
 
-    return aligner.score(Seq(seq1_clean), Seq(seq2_clean))
+    return aligner.score(seq1_clean, seq2_clean)
 
 def generate_match_line(aligned_seq1, aligned_seq2, substitution_matrix, threshold=1):
     """

@@ -23,8 +23,8 @@ class TestBestMatchFinder(unittest.TestCase):
     def test_get_aligner_overlap(self):
         aligner = get_aligner("DNA", mode="overlap", open_gap_score=-0.5, extend_gap_score=-0.1)
         self.assertEqual(aligner.mode, "global")
-        self.assertEqual(aligner.open_end_gap_score, 0.0)
-        self.assertEqual(aligner.extend_end_gap_score, 0.0)
+        self.assertEqual(aligner.end_open_gap_score, 0.0)
+        self.assertEqual(aligner.end_extend_gap_score, 0.0)
 
     def test_calculate_alignment_score(self):
         aligner = get_aligner("DNA")
@@ -89,7 +89,7 @@ class TestBestMatchFinder(unittest.TestCase):
         self.assertEqual(results[0]['Sequence ID'], "S2")
 
     def test_find_best_match_normalized(self):
-        aligner = get_aligner("DNA")
+        aligner = get_aligner("DNA", mode="overlap")
         ref = SeqRecord(Seq("ATGCATGC"), id="Ref")
         # Short perfect match
         s1 = SeqRecord(Seq("ATGC"), id="S1")

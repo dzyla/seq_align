@@ -147,7 +147,7 @@ def compute_distance(seq1, seq2, seq_type):
         float: Distance value between 0 and 1
     """
     # Use standard gap scores for distance computation
-    aligner = get_aligner(seq_type, mode='global', open_gap_score=-0.5, extend_gap_score=-0.1)
+    aligner = get_aligner(seq_type, mode='global')
 
     alignments = aligner.align(seq1, seq2)
     try:
