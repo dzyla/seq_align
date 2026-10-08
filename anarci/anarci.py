@@ -678,7 +678,8 @@ def run_germline_assignment(state_vector, sequence, chain_type, allowed_species=
     # The maximum sequence identity is used to assign the germline
     if chain_type in all_germlines["V"]:
         if allowed_species is not None:
-            if not all( [ sp in all_germlines['V'][chain_type] for sp in allowed_species ] ): # Made non-fatal
+            allowed_species = [ sp for sp in allowed_species if sp in all_germlines['V'][chain_type] ]
+            if not allowed_species:
                 return {}
         else:
             allowed_species = all_species

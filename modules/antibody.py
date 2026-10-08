@@ -31,7 +31,8 @@ LIABILITY_RULES = [
     ("N-glycosylation", r"N[^P][ST]", "High", False),
     ("Deamidation", r"NG", "High", False),
     ("Deamidation", r"N[ST]", "Medium", False),
-    ("Isomerization", r"D[GS]", "Medium", False),
+    ("Isomerization", r"DG", "High", False),
+    ("Isomerization", r"DS", "Medium", False),
     ("Fragmentation", r"DP", "Medium", False),
     ("Oxidation", r"[MW]", "Medium", True),
 ]
@@ -86,8 +87,10 @@ def cdr_position_colors(row, include_liabilities=False, liabilities=()):
         index = {label: i for i, label in enumerate(row["_labels"], start=1)}
         for flag in liabilities:
             pos = index.get(flag["Position"])
-            if pos:
-                colors[pos] = (LIABILITY_COLOR, f"{flag['Liability']} {flag['Motif']}{flag['Position']}")
+            if not pos or flag["Motif"] == "-":
+                continue
+            for k in range(pos, min(pos + len(flag["Motif"]), len(row["_labels"]) + 1)):
+                colors[k] = (LIABILITY_COLOR, f"{flag['Liability']} {flag['Motif']}{flag['Position']}")
     return colors
 
 
@@ -103,11 +106,22 @@ def find_liabilities(sequence, labels, regions, scheme, chain_type):
                           "Region": regions[i], "Severity": severity})
     canonical = CANONICAL_CYSTEINES.get(scheme.lower(), {}).get({"H": "H", "K": "L", "L": "L"}.get(chain_type))
     if canonical is not None:
+        extra = []
+        present = set()
         for i, aa in enumerate(sequence):
             number = int(re.match(r"\d+", labels[i]).group())
-            if aa == "C" and number not in canonical:
-                found.append({"Liability": "Unpaired cysteine", "Motif": "C", "Position": labels[i],
-                              "Region": regions[i], "Severity": "High"})
+            if aa == "C":
+                if number in canonical:
+                    present.add(number)
+                else:
+                    extra.append(i)
+        severity = "High" if len(extra) % 2 else "Medium"
+        for i in extra:
+            found.append({"Liability": "Non-canonical cysteine", "Motif": "C", "Position": labels[i],
+                          "Region": regions[i], "Severity": severity})
+        for number in sorted(canonical - present):
+            found.append({"Liability": "Missing canonical cysteine", "Motif": "-", "Position": str(number),
+                          "Region": "", "Severity": "High"})
     return found
 
 
@@ -197,7 +211,7 @@ def run_numbering(pairs, scheme, species, threshold, assign_germline=True):
                 "Sequence ID": pairs[i][0],
                 "Domain Index": j + 1,
                 "Chain Type": chain_type,
-                "Species": details.get('species', 'Unknown'),
+                "HMM Species": details.get('species', 'Unknown'),
                 "Germline Species": v_hit[0] if v_hit else "",
                 "V Gene": v_hit[1] if v_hit else "",
                 "V Identity (%)": round(100 * v_id, 1) if v_id is not None else None,
@@ -285,7 +299,7 @@ def antibody_prediction_section(sequences):
         ["Domains", "Germlines", "Liabilities", "Pairs", "Structure"])
 
     with tab_domains:
-        cols = ["Sequence ID", "Chain Type", "Species", "CDR1", "CDR2", "CDR3", "Score", "E-value", "Sequence"]
+        cols = ["Sequence ID", "Chain Type", "HMM Species", "CDR1", "CDR2", "CDR3", "Score", "E-value", "Sequence"]
         st.dataframe(df[[c for c in cols if c in df.columns]], hide_index=True)
         if "CDR1" not in df.columns:
             st.caption(f"CDR definitions are not available for the {scheme} scheme; showing numbering only.")
@@ -300,6 +314,8 @@ def antibody_prediction_section(sequences):
         st.dataframe(df[["Sequence ID", "Domain Index", "Chain Type", "Germline Species", "V Gene",
                          "V Identity (%)", "J Gene", "J Identity (%)"]], hide_index=True)
         st.caption("Closest germline by sequence identity over the numbered V/J region (ANARCI).")
+        if (df["V Gene"] == "").any():
+            st.caption("Blank genes: no germline for that chain type among the selected species.")
 
     with tab_liab:
         rows = [{"Sequence ID": df.loc[i, "Sequence ID"], "Domain": df.loc[i, "Domain Index"], **flag}
@@ -311,7 +327,8 @@ def antibody_prediction_section(sequences):
         else:
             st.write("No liability motifs found.")
         caption = ("Sequence motifs associated with chemical or expression liabilities; flags for review, "
-                   "not predictions. Oxidation is reported only in CDRs.")
+                   "not predictions. Oxidation is reported only in CDRs. Non-canonical cysteines may form an extra "
+                   "disulfide (e.g. the VHH CDR1-CDR3 bond); an odd count suggests a free thiol.")
         if "CDR1" not in df.columns:
             caption += " Oxidation is not assessed because this numbering scheme has no CDR definitions."
         st.caption(caption)

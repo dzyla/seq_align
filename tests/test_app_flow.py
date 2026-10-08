@@ -161,3 +161,6 @@ def test_antibody_tabs_render():
     at.button(key="predict_domains").click().run()
     assert not at.exception
     assert [t.label for t in at.tabs][:4] == ["Domains", "Germlines", "Liabilities", "Pairs"]
+    frames = [d.value for d in at.dataframe]
+    assert any("V Gene" in f.columns and "IGHV3-23*04" in set(f["V Gene"]) for f in frames)
+    assert any("Pair" in f.columns and "example" in set(f["Pair"]) for f in frames)

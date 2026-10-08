@@ -80,7 +80,9 @@ def test_liabilities_crafted_sequence():
     assert ("Oxidation", "6") in found          # M in CDR1
     assert ("Oxidation", "9") in found          # W in CDR1
     assert ("Fragmentation", "7") in found      # DP
-    assert ("Unpaired cysteine", "10") in found
+    assert ("Non-canonical cysteine", "10") in found
+    assert ("Missing canonical cysteine", "23") in found
+    assert ("Missing canonical cysteine", "104") in found
 
 
 def test_oxidation_only_in_cdrs():
@@ -88,9 +90,45 @@ def test_oxidation_only_in_cdrs():
     assert not any(f["Liability"] == "Oxidation" for f in found)
 
 
+def _cys(seq, labels):
+    return [f for f in find_liabilities(seq, labels, [""] * len(seq), "imgt", "H")
+            if f["Liability"] == "Non-canonical cysteine"]
+
+
+def test_two_noncanonical_cysteines_medium():
+    two = _cys("CCC", ["23", "30", "40"])
+    assert [f["Severity"] for f in two] == ["Medium", "Medium"]
+
+
+def test_one_noncanonical_cysteine_high():
+    assert [f["Severity"] for f in _cys("CC", ["23", "30"])] == ["High"]
+
+
+def test_missing_canonical_absent_when_both_present():
+    found = find_liabilities("CC", ["23", "104"], ["FR1", "FR3"], "imgt", "H")
+    assert not any(f["Liability"] == "Missing canonical cysteine" for f in found)
+    row = [f for f in find_liabilities("A", ["23"], ["FR1"], "imgt", "H")
+           if f["Liability"] == "Missing canonical cysteine"]
+    assert {f["Position"] for f in row} == {"23", "104"} and row[0]["Severity"] == "High"
+    assert row[0]["Motif"] == "-" and row[0]["Region"] == ""
+
+
+def test_isomerization_dg_high_ds_medium():
+    found = find_liabilities("ADGDSA", [str(i) for i in range(1, 7)], [""] * 6, "aho", "H")
+    sev = {f["Motif"]: f["Severity"] for f in found if f["Liability"] == "Isomerization"}
+    assert sev == {"DG": "High", "DS": "Medium"}
+
+
+def test_cdr_colors_cover_whole_motif():
+    row = {"Sequence": "ANGTA", "Chain Type": "H", "_labels": ["1", "2", "3", "4", "5"],
+           "_regions": [""] * 5}
+    colors = cdr_position_colors(row, True, [{"Position": "2", "Liability": "Deamidation", "Motif": "NG"}])
+    assert {2, 3} <= set(colors) and 4 not in colors
+
+
 def test_canonical_cysteines_not_flagged():
     found = find_liabilities("CC", ["23", "104"], ["FR1", "FR3"], "imgt", "H")
-    assert not any(f["Liability"] == "Unpaired cysteine" for f in found)
+    assert not any(f["Liability"] in ("Non-canonical cysteine", "Missing canonical cysteine") for f in found)
 
 
 def test_no_region_scheme():
@@ -144,4 +182,11 @@ def test_cdr_position_colors():
 
 def test_unknown_chain_type_skips_cysteine_rule():
     flags = find_liabilities("C", ["10"], ["FR1"], "kabat", "A")
-    assert not [f for f in flags if f["Liability"] == "Unpaired cysteine"]
+    assert not [f for f in flags if f["Liability"] in ("Non-canonical cysteine", "Missing canonical cysteine")]
+
+
+@needs_hmmer
+def test_germline_mixed_species_with_missing_chain_germlines():
+    df = run_numbering([("vl", VL)], "IMGT", species=["human", "alpaca"], threshold=80)
+    assert df.iloc[0]["V Gene"] == "IGKV1-39*01"
+    assert "HMM Species" in df.columns

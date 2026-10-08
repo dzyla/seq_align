@@ -1,4 +1,5 @@
 """Mol* (MolViewSpec) 3D views of structures with residue-level highlights."""
+import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -186,6 +187,11 @@ def _add_structure_controls(key):
             st.error(str(e))
 
 
+def _chain_key(key, ref_seq):
+    """Chain selectbox key that changes with the reference so each reference starts at its best chain."""
+    return f"{key}_chain_{hashlib.sha1(ref_seq.encode()).hexdigest()[:8]}"
+
+
 def structure_highlight_panel(ref_seq, position_colors, key, title="🧊 Show on structure (Mol*)"):
     """Color reference positions on a structure; `position_colors` maps position -> (hex color, label)."""
     with st.expander(title):
@@ -201,7 +207,7 @@ def structure_highlight_panel(ref_seq, position_colors, key, title="🧊 Show on
             st.warning("No protein chains in this structure.")
             return
         ranked = rank_chains(ref_seq, table)
-        chain_id = st.selectbox("Chain", [c for c, _ in ranked], key=f"{key}_chain",
+        chain_id = st.selectbox("Chain", [c for c, _ in ranked], key=_chain_key(key, ref_seq),
                                 format_func=lambda c: f"{c} ({dict(ranked)[c]:.1%} identity)")
         pos_map, identity = map_sequence_to_structure(ref_seq, table[chain_id])
         highlights, unmapped = position_highlights(position_colors, pos_map)

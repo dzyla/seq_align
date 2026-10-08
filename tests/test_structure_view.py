@@ -105,3 +105,10 @@ def test_is_predicted_model():
     assert not is_predicted_model(CIF_SF)
     assert is_predicted_model(StructureFile(name="AF-P69905-F1-model_v6.cif", data=b"x", fmt="mmCIF"))
     assert is_predicted_model(StructureFile(name="m.cif", data=b"loop_\n_ma_qa_metric.id\n", fmt="mmCIF"))
+
+
+def test_chain_key_depends_on_reference():
+    from modules.structure_view import _chain_key
+    assert _chain_key("k", "AAAA") == _chain_key("k", "AAAA")
+    assert _chain_key("k", "AAAA") != _chain_key("k", "CCCC")
+    assert _chain_key("k", "AAAA").startswith("k_chain")
