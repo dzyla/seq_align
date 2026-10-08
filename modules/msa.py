@@ -18,6 +18,7 @@ from modules.structure_view import (
     Highlight, ResidueRef, available_structures, build_view_state, cached_residue_table,
     map_sequence_to_structure, rank_chains, render_molstar, structure_highlight_panel,
 )
+from modules.variants import variant_matrix, variants_long
 from modules.phylogeny import TREE_METHODS, TreeError, build_tree_from_alignment, phylogenetic_tree_section
 
 def msa_section(sequences, seq_type):
@@ -75,9 +76,9 @@ def msa_section(sequences, seq_type):
         st.error(str(e))
         mutations = {}
 
-    tab_titles = ["Alignment & Heatmap", "Point Mutations", "Conservation", "Phylogenetic Tree"]
+    tab_titles = ["Alignment & Heatmap", "Point Mutations", "Variant Table", "Conservation", "Phylogenetic Tree"]
     if calculate_representative:
-        tab_titles.insert(2, "Representative Sequence")
+        tab_titles.insert(tab_titles.index("Variant Table") + 1, "Representative Sequence")
     tabs = st.tabs(tab_titles)
 
     with tabs[0]:
@@ -90,7 +91,7 @@ def msa_section(sequences, seq_type):
         except MSAError as e:
             st.error(str(e))
 
-    with tabs[1]:
+    with tabs[tab_titles.index("Point Mutations")]:
         st.subheader("🔍 Point Mutations Relative to Reference")
         if any(mutations.values()):
             seq_ids = sorted(mutations)
@@ -118,8 +119,22 @@ def msa_section(sequences, seq_type):
         else:
             st.write("No point mutations detected relative to the reference sequence.")
 
+    with tabs[tab_titles.index("Variant Table")]:
+        st.subheader("🧾 Variant Table (substitutions and indels)")
+        matrix = variant_matrix(aligned, ref_seq_id)
+        if matrix.empty or matrix.shape[1] == 0:
+            st.write("No variants relative to the reference.")
+        else:
+            st.caption(f"Rows: sequences. Columns: {ref_seq_id} positions. Indels use HGVS-like notation "
+                       "(e.g. V3_L4insW, A5_A6del).")
+            st.dataframe(matrix, width="stretch")
+            st.download_button("📥 Variant matrix (CSV)", matrix.to_csv(), "variant_matrix.csv", "text/csv",
+                               on_click="ignore")
+            st.download_button("📥 Variants, one per row (CSV)", variants_long(aligned, ref_seq_id).to_csv(index=False),
+                               "variants_long.csv", "text/csv", on_click="ignore")
+
     if calculate_representative:
-        with tabs[2]:
+        with tabs[tab_titles.index("Representative Sequence")]:
             st.subheader("🧬 Representative Sequence Analysis")
             data = st.session_state.consensus_data
             if data is None or data['threshold'] != consensus_threshold:
@@ -191,7 +206,7 @@ def msa_section(sequences, seq_type):
                                            help="Open in ChimeraX and use: color bfactor palette ^bluered. "
                                                 "Unscored residues (gap-rich columns) and other chains are written as 0.0.")
 
-    with tabs[-1]:
+    with tabs[tab_titles.index("Phylogenetic Tree")]:
         st.subheader("🌳 Phylogenetic Tree from MSA")
         c_m, c_c = st.columns(2)
         tree_method = c_m.selectbox("Tree method", list(TREE_METHODS), key="msa_tree_method")

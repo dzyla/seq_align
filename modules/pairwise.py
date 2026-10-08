@@ -8,6 +8,7 @@ import logging
 import re
 from modules.utils import have_params_changed, stale_notice
 from modules.seqtools import clean_sequence
+from modules.variants import call_variants
 from functools import lru_cache
 from dataclasses import dataclass, field
 
@@ -191,6 +192,11 @@ def pairwise_alignment_section(sequences, seq_type):
         st.download_button(label="📥 Download Mutations (CSV)", data=convert_mutations_to_csv(result.mutations),
                            file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv", mime="text/csv",
                            on_click="ignore")
+
+    indels = [v.label for v in call_variants(result.aligned_ref, result.aligned_query, result.ref_start,
+                                             result.ref_rotation, result.ref_length) if v.kind != "sub"]
+    if indels:
+        st.write(f"**Indels and terminal extensions ({len(indels)}):** {', '.join(indels)}")
 
     if seq_type == "Protein" and result.mutations:
         from modules.structure_view import structure_highlight_panel  # local: avoids a circular import
