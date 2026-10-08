@@ -16,7 +16,8 @@ from modules.parsers import (
 )
 from modules.pdb_renumber import pdb_renumber_section
 from modules.phylogeny import TREE_METHODS, TreeError, build_phylogenetic_tree, phylogenetic_tree_section
-from modules.seqtools import fingerprint
+from modules.overview import EXAMPLES, load_example_callback, show_dataset_overview
+from modules.seqtools import detect_seq_type, fingerprint
 from modules.structures import STRUCTURE_FORMATS, StructureFile
 from modules.utils import get_file_extensions, init_session_state, reset_all_results, stale_notice, track_dataset
 
@@ -153,6 +154,10 @@ Mutation positions are always reported in reference-sequence coordinates.
 """)
 
     st.sidebar.header("📥 Upload and Settings")
+    c_ex, c_btn = st.sidebar.columns([3, 1], vertical_alignment="bottom")
+    c_ex.selectbox("Example data", ["—"] + list(EXAMPLES), key="example_choice")
+    c_btn.button("Load", key="load_example", on_click=load_example_callback,
+                 disabled=st.session_state.get("example_choice", "—") == "—")
     input_format = st.sidebar.selectbox("Select Input Format", INPUT_FORMATS, key="input_format",
                                         help="Choose the format of your input sequences.")
     sequences, tree = handle_input(input_format)
@@ -164,14 +169,17 @@ Mutation positions are always reported in reference-sequence coordinates.
         st.info("Please upload sequences or a Newick tree in the sidebar to begin.")
         return
 
-    track_dataset(fingerprint(sequences))
-    structures = st.session_state.get("structures", {})
-
-    seq_type = st.sidebar.selectbox("🔬 Select Sequence Type", ("DNA", "Protein"), index=1, key="seq_type_select",
-                                    help="Choose whether your sequences are DNA or Protein.")
+    changed = track_dataset(fingerprint(sequences))
+    detected = detect_seq_type([str(s.seq) for s in sequences])
+    if changed or "seq_type_select" not in st.session_state:
+        st.session_state.seq_type_select = detected
+    seq_type = st.sidebar.selectbox("🔬 Sequence Type", ("DNA", "Protein"), key="seq_type_select",
+                                    help=f"Auto-detected as {detected}. Change it if the detection is wrong.")
     if st.session_state.get("seq_type") != seq_type:
         st.session_state.seq_type = seq_type
         reset_all_results()
+    structures = st.session_state.get("structures", {})
+    show_dataset_overview(sequences, seq_type)
 
     if input_format in STRUCTURE_FORMATS:
         options = ("Extracted Sequences", "Sequence Clustering", "Antibody Prediction", "Phylogenetic Tree",

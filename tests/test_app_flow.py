@@ -68,10 +68,11 @@ def test_orf_results_survive_rerun():
     at = load(DNA)
     at.selectbox(key="seq_type_select").select("DNA").run()
     at.selectbox(key="analysis_select").select("Translate DNA").run()
+    before = len(at.dataframe)                 # the dataset overview table
     at.button(key="find_orfs").click().run()
-    assert len(at.dataframe) == 1
+    assert len(at.dataframe) == before + 1
     at.run()                                   # any rerun, e.g. from another widget
-    assert len(at.dataframe) == 1
+    assert len(at.dataframe) == before + 1
 
 
 def test_pairwise_shows_stale_notice_after_param_change():
@@ -85,3 +86,17 @@ def test_title_has_no_ability_wording():
     at.run()
     assert at.title[0].value == "🔬 Advanced Sequence Alignment Tool"
     assert all("Abilit" not in m.value for m in at.markdown)
+
+
+def test_dna_detected_automatically():
+    at = load(">x\nATGCATGCATGCATGC\n>y\nATGCATGAATGCATGC\n")
+    assert at.selectbox(key="seq_type_select").value == "DNA"
+
+
+def test_load_example_button():
+    at = AppTest.from_file("app.py", default_timeout=60)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    assert not at.exception
+    assert len(at.session_state["input_cache"][0]) == 6

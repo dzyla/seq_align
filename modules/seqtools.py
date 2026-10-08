@@ -34,3 +34,15 @@ def fingerprint(records):
         digest.update(str(record.seq).encode())
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+_NUCLEOTIDE_LETTERS = frozenset("ACGTUN")
+
+
+def detect_seq_type(seqs, dna_fraction=0.9):
+    """'DNA' if at least `dna_fraction` of all letters are A/C/G/T/U/N, else 'Protein'."""
+    letters = [c for s in seqs for c in str(s).upper() if c.isalpha()]
+    if not letters:
+        return "Protein"
+    nucleotide = sum(1 for c in letters if c in _NUCLEOTIDE_LETTERS)
+    return "DNA" if nucleotide / len(letters) >= dna_fraction else "Protein"
