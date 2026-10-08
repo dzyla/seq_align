@@ -173,3 +173,15 @@ def test_msa_logo_and_identity_export_render():
     assert not at.exception
     assert at.session_state["logo_window"] == (1, 11)
     assert any(d.label == "📥 Percent identity matrix (CSV)" for d in at.get("download_button"))
+
+
+def test_msa_logo_guard_for_single_column(monkeypatch):
+    # pyFAMSA segfaults on single-residue input, so stub the aligner to produce a 1-column MSA
+    import modules.msa as msa_module
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type: [("a", "M"), ("b", "K")])
+    at = load(">a\nM\n>b\nK\n")
+    at.selectbox(key="analysis_select").select("MSA").run()
+    at.button[0].click().run()
+    assert not at.exception
+    assert any("Logo needs at least 2 columns" in c.value for c in at.caption)
+    assert not any(s.key == "logo_window" for s in at.slider)

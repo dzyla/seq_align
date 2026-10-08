@@ -175,13 +175,17 @@ def msa_section(sequences, seq_type):
         st.line_chart(pd.DataFrame({"Conservation": pd.Series(ref_scores)}), x_label="Reference position",
                       y_label="Conservation")
         length = len(aligned[0][1])
-        start, end = st.slider("Logo window (alignment columns)", 1, length, (1, min(length, 60)), key="logo_window")
-        if end - start + 1 > 120:
-            st.warning("Showing the first 120 columns of the window.")
-            end = start + 119
-        fig = logo_figure(logo_matrix([s for _, s in aligned], seq_type, start, end), seq_type)
-        st.pyplot(fig)
-        plt.close(fig)
+        if length < 2:
+            st.caption("Logo needs at least 2 columns.")
+        else:
+            start, end = st.slider("Logo window (alignment columns)", 1, length, (1, min(length, 60)),
+                                   key="logo_window")
+            if end - start + 1 > 120:
+                st.warning("Showing the first 120 columns of the window.")
+                end = start + 119
+            fig = logo_figure(logo_matrix([s for _, s in aligned], seq_type, start, end), seq_type)
+            st.pyplot(fig)
+            plt.close(fig)
         if seq_type == "Protein":
             ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein").replace("*", "")
             with st.expander("🧊 Conservation on structure (Mol*) and B-factor export"):

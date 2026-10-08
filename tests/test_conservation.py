@@ -1,3 +1,4 @@
+import pytest
 import math
 import pathlib
 from io import StringIO
@@ -81,3 +82,21 @@ def test_identity_matrix_frame():
     df = identity_matrix_frame([("a", "MKV"), ("b", "MKL")])
     assert df.loc["a", "b"] == round(200 / 3, 1)
     assert df.loc["a", "a"] == 100.0
+
+
+def test_logo_full_conservation_protein_is_log2_20():
+    m = logo_matrix(["M", "M", "M", "M"])
+    assert m.shape == (1, 20)
+    assert m.sum(axis=1).iloc[0] == pytest.approx(math.log2(20), abs=1e-6)
+
+
+def test_logo_full_conservation_dna_is_2_bits():
+    m = logo_matrix(["A", "A", "A"], seq_type="DNA")
+    assert m.shape == (1, 4)
+    assert m.sum(axis=1).iloc[0] == pytest.approx(2.0, abs=1e-6)
+
+
+def test_logo_all_gap_column_is_zero_not_nan():
+    m = logo_matrix(["-", "-", "-"])
+    assert not m.isna().any().any()
+    assert m.sum(axis=1).iloc[0] == 0

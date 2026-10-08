@@ -72,11 +72,25 @@ def write_bfactors(sf, values, default=0.0):
     return text if sf.fmt == "mmCIF" else extract_header_records(sf.text) + text
 
 
+PROTEIN_ALPHABET = list("ACDEFGHIKLMNPQRSTVWY")
+DNA_ALPHABET = list("ACGT")
+
+
 def logo_matrix(aligned, seq_type="Protein", start=1, end=None):
-    """Information content (bits) per residue for alignment columns start..end (1-based, inclusive)."""
+    """Information content (bits) per residue for alignment columns start..end (1-based, inclusive),
+    against a uniform background over the full alphabet, without pseudocounts."""
+    alphabet = DNA_ALPHABET if seq_type == "DNA" else PROTEIN_ALPHABET
     window = [s[start - 1:end].upper() for s in aligned]
-    ignore = ".-X" if seq_type == "Protein" else ".-N"
-    matrix = logomaker.alignment_to_matrix(window, to_type="information", characters_to_ignore=ignore)
+    width = len(window[0]) if window else 0
+    if not any(c in alphabet for s in window for c in s):
+        # logomaker rejects windows with no countable residues (all gaps or ambiguity codes)
+        matrix = pd.DataFrame(0.0, index=range(width), columns=alphabet)
+    else:
+        counts = logomaker.alignment_to_matrix(window, to_type="counts", characters_to_ignore=".-XNBZJOU*")
+        counts = counts.reindex(columns=alphabet, fill_value=0)
+        background = np.ones(len(alphabet)) / len(alphabet)
+        matrix = logomaker.transform_matrix(counts, from_type="counts", to_type="information",
+                                            pseudocount=0, background=background).fillna(0.0)
     matrix.index = matrix.index + start
     return matrix
 
