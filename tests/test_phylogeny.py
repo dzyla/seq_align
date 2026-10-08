@@ -163,6 +163,10 @@ def test_tree_section_outgroup_and_fallback(tmp_path):
     at.multiselect(key="t_outgroup").set_value(["MYG_HUMAN"]).run()
     assert not at.exception and not at.warning
     at.multiselect(key="t_outgroup").set_value([]).run()
+    assert not at.exception and not at.warning
+    assert any("Pick one or more outgroup leaves" in i.value for i in at.info)
+    every_leaf = at.multiselect(key="t_outgroup").options
+    at.multiselect(key="t_outgroup").set_value(every_leaf).run()
     assert not at.exception
     assert any("midpoint rooting instead" in w.value for w in at.warning)
 
@@ -214,3 +218,56 @@ def test_tree_preview_matches_export_framing():
     w, h = Image.open(BytesIO(out["preview"])).size
     svg_w, svg_h = (float(v) for v in re.search(rb'width="([\d.]+)pt" height="([\d.]+)pt"', out["svg"]).groups())
     assert w / 150 == pytest.approx(svg_w / 72, abs=0.03) and h / 150 == pytest.approx(svg_h / 72, abs=0.03)
+
+
+def test_tree_section_clade_colour_on_two_leaf_tree(tmp_path):
+    at = tree_page(tmp_path, "(A:0.1,B:0.2);")
+    control(at, "t_style").set_value("Clade colour").run()
+    assert not at.exception, at.exception
+    assert not [w for w in at.slider if w.key == "t_clades"]
+
+
+def test_tree_section_clade_names_persist_across_k(tmp_path):
+    at = tree_page(tmp_path)
+    at.session_state["t_clade_name_store"] = ["Alpha", "", "Gamma"]
+    control(at, "t_style").set_value("Clade colour").run()
+    assert not at.exception
+    assert at.session_state["t_clade_name_store"][:3] == ["Alpha", "", "Gamma"]
+    at.slider(key="t_clades").set_value(2).run()
+    at.slider(key="t_clades").set_value(4).run()
+    assert not at.exception
+    assert at.session_state["t_clade_name_store"][:4] == ["Alpha", "", "Gamma", "Clade 4"]
+
+
+def test_tree_section_notes_when_figure_is_wider_than_asked(tmp_path):
+    at = tree_page(tmp_path)
+    control(at, "t_layout").set_value("Circular").run()
+    at.slider(key="t_width").set_value(8.0).run()
+    assert not at.exception
+    assert any("cm wide so labels fit" in c.value for c in at.caption)
+
+
+def dark_tree_page(tmp_path, charts):
+    script = tmp_path / "dark_tree_page.py"
+    script.write_text(textwrap.dedent(f"""
+        import sys
+        sys.path.insert(0, {str(ROOT)!r})
+        from io import StringIO
+        import streamlit as st
+        from Bio import Phylo
+        import modules.ui
+        modules.ui.theme_type = lambda: "dark"
+        st.session_state["appearance_charts"] = {charts!r}
+        from modules.phylogeny import phylogenetic_tree_section
+        phylogenetic_tree_section(Phylo.read(StringIO({GLOBIN_NEWICK!r}), "newick"), "t")
+    """))
+    at = AppTest.from_file(str(script), default_timeout=120)
+    at.run()
+    control(at, "t_view").set_value("Explore").run()
+    assert not at.exception, at.exception
+    return at.get("plotly_chart")[0].proto.spec
+
+
+@pytest.mark.parametrize("charts,cream", [("Match theme", True), ("Publication white", False)])
+def test_explore_view_is_dark_only_when_charts_match_night_theme(tmp_path, charts, cream):
+    assert ("#ece8df" in dark_tree_page(tmp_path, charts)) is cream

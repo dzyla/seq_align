@@ -77,14 +77,21 @@ def phylogenetic_tree_section(tree, key_prefix="tree"):
         outgroup = []
         if rooting == "Outgroup":
             outgroup = st.multiselect("Outgroup leaves", leaves, key=key("outgroup"))
+            if not outgroup:
+                st.info("Pick one or more outgroup leaves; midpoint rooting is used until then.")
         n_clades, clade_names = 1, []
         if STYLES[style_label] == "clades":
             c1, c2 = st.columns([1, 2])
-            n_clades = c1.slider("Clades", 2, max(2, min(12, len(leaves))), min(3, len(leaves)),
-                                 key=key("clades"))
-            table = c2.data_editor(pd.DataFrame({"Clade name": [f"Clade {i + 1}" for i in range(n_clades)]}),
-                                   hide_index=True, width="stretch", key=key(f"clade_names_{n_clades}"))
+            if len(leaves) > 2:
+                n_clades = c1.slider("Clades", 2, min(12, len(leaves)), 3, key=key("clades"))
+            else:  # a slider needs min < max
+                n_clades = len(leaves)
+            store = st.session_state.setdefault(key("clade_name_store"), [])  # names survive changes of k
+            seed = [store[i] if i < len(store) else f"Clade {i + 1}" for i in range(n_clades)]
+            table = c2.data_editor(pd.DataFrame({"Clade name": seed}), hide_index=True, width="stretch",
+                                   key=key(f"clade_names_{n_clades}"))
             clade_names = table["Clade name"].fillna("").astype(str).tolist()
+            st.session_state[key("clade_name_store")] = clade_names + store[n_clades:]
         support_min = st.slider("Show support ≥", 0, 100, 50, key=key("support"))
         with st.expander("Labels and size"):
             c1, c2, c3 = st.columns(3)
@@ -105,29 +112,38 @@ def phylogenetic_tree_section(tree, key_prefix="tree"):
                       height_cm=height_cm, clade_names=clade_names)
     style_items = tuple((k, tuple(v) if isinstance(v, list) else v) for k, v in asdict(style).items())
     args = (newick_in, LAYOUT_OPTIONS[layout], cladogram and layout != "Unrooted")
+    rooting_mode = "midpoint" if rooting == "Outgroup" and not outgroup else ROOTING_OPTIONS[rooting]
     with st.spinner("Drawing tree..."):
         try:
-            out = tree_figure_outputs(*args, ROOTING_OPTIONS[rooting], tuple(outgroup), ladderize, n_clades,
-                                      style_items)
+            out = tree_figure_outputs(*args, rooting_mode, tuple(outgroup), ladderize, n_clades, style_items)
         except TreeError as e:
             st.warning(f"{e} Using midpoint rooting instead.")
-            out = tree_figure_outputs(*args, "midpoint", (), ladderize, n_clades, style_items)
-    if out["drawing"].warning:
-        st.warning(out["drawing"].warning)
+            try:
+                out = tree_figure_outputs(*args, "midpoint", (), ladderize, n_clades, style_items)
+            except TreeError as e2:
+                st.error(str(e2))
+                return
+    drawing = out["drawing"]
+    if drawing.warning:
+        st.warning(drawing.warning)
+    if layout != "Rectangular" and drawing.width > width_cm / 2.54 + 0.05:
+        st.caption(f"The figure is {drawing.width * 2.54:.0f} cm wide so labels fit; reduce the font size to make "
+                   "it smaller.")
 
     view = st.segmented_control("View", ["Figure", "Explore"], default="Figure", required=True, key=key("view"),
                                 help="Figure is exactly what you download. Explore adds hover and zoom.")
     if view == "Figure":
         st.image(out["preview"])
     else:
-        show_plotly(render_plotly(out["drawing"], dark=theme_type() == "dark"), width="stretch")
+        dark = theme_type() == "dark" and st.session_state.get("appearance_charts") != "Publication white"
+        show_plotly(render_plotly(drawing, dark=dark), width="stretch")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.download_button("SVG", out["svg"], "phylogenetic_tree.svg", "image/svg+xml", icon=":material/download:",
                        on_click="ignore", width="stretch", key=key("dl_svg"))
     c2.download_button("PDF", out["pdf"], "phylogenetic_tree.pdf", "application/pdf",
                        icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_pdf"))
-    c3.download_button("PNG (600 dpi)", lambda: _png_600(out["drawing"]), "phylogenetic_tree.png", "image/png",
+    c3.download_button("PNG (600 dpi)", lambda: _png_600(drawing), "phylogenetic_tree.png", "image/png",
                        icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_png"))
     c4.download_button("Newick", out["newick"], "phylogenetic_tree.nwk", "text/plain",
                        icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_nwk"),
