@@ -96,3 +96,34 @@ def test_canonical_cysteines_not_flagged():
 def test_no_region_scheme():
     found = find_liabilities("NGTC", ["1", "2", "3", "4"], ["", "", "", ""], "aho", "H")
     assert {f["Liability"] for f in found} == {"N-glycosylation", "Deamidation"}
+
+
+from modules.antibody import chain_stem, pair_domains
+
+
+def _row(seq_id, idx, chain, cdr3="X", v="IGV"):
+    return {"Sequence ID": seq_id, "Domain Index": idx, "Chain Type": chain, "CDR3": cdr3, "V Gene": v}
+
+
+def test_chain_stem():
+    assert chain_stem("mAb1_HC") == "mAb1"
+    assert chain_stem("mAb1-light") == "mAb1"
+    assert chain_stem("abc.VH") == "abc"
+    assert chain_stem("plain") == "plain"
+    assert chain_stem("seq_vel") == "seq_vel"
+
+
+def test_scfv_paired_within_sequence():
+    pairs, unpaired = pair_domains([_row("scfv", 1, "H"), _row("scfv", 2, "K")])
+    assert pairs[0]["Format"] == "scFv / single chain" and unpaired == []
+
+
+def test_separate_chains_paired_by_stem():
+    pairs, _ = pair_domains([_row("mAb1_HC", 1, "H", "ARDY"), _row("mAb1_LC", 1, "K", "QQSY")])
+    assert pairs[0]["Pair"] == "mAb1"
+    assert (pairs[0]["Heavy CDR3"], pairs[0]["Light CDR3"]) == ("ARDY", "QQSY")
+
+
+def test_unpaired_listed():
+    pairs, unpaired = pair_domains([_row("lonely_H", 1, "H")])
+    assert pairs == [] and unpaired == ["lonely_H (domain 1, H)"]

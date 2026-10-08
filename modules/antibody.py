@@ -91,6 +91,46 @@ def find_liabilities(sequence, labels, regions, scheme, chain_type):
     return found
 
 
+# A separator is required, so IDs that merely end in h/l/k (e.g. "seq_vel") are left alone.
+_CHAIN_SUFFIX = re.compile(r"[_\-\s.|](heavy|light|hc|lc|vh|vl|vk|h|l|k)$", re.IGNORECASE)
+
+
+def chain_stem(seq_id):
+    stem = _CHAIN_SUFFIX.sub("", seq_id)
+    return stem or seq_id
+
+
+def _domain_label(row):
+    return f"{row['Sequence ID']} (domain {row['Domain Index']}, {row['Chain Type']})"
+
+
+def pair_domains(rows):
+    """Pair heavy and light domains: within one sequence (scFv) first, then across IDs sharing a stem."""
+    heavy = [r for r in rows if r["Chain Type"] == "H"]
+    light = [r for r in rows if r["Chain Type"] in ("K", "L")]
+    used, pairs = set(), []
+
+    def add(h, l, fmt, name):
+        used.update({id(h), id(l)})
+        pairs.append({"Pair": name, "Format": fmt, "Heavy": _domain_label(h), "Light": _domain_label(l),
+                      "Heavy CDR3": h.get("CDR3", ""), "Light CDR3": l.get("CDR3", ""),
+                      "Heavy V": h.get("V Gene", ""), "Light V": l.get("V Gene", "")})
+
+    for h in heavy:
+        partner = next((l for l in light if id(l) not in used and l["Sequence ID"] == h["Sequence ID"]), None)
+        if partner:
+            add(h, partner, "scFv / single chain", h["Sequence ID"])
+    for h in heavy:
+        if id(h) in used:
+            continue
+        partner = next((l for l in light if id(l) not in used and l["Sequence ID"] != h["Sequence ID"]
+                        and chain_stem(l["Sequence ID"]) == chain_stem(h["Sequence ID"])), None)
+        if partner:
+            add(h, partner, "Separate chains", chain_stem(h["Sequence ID"]))
+    unpaired = [_domain_label(r) for r in heavy + light if id(r) not in used]
+    return pairs, unpaired
+
+
 def public_columns(df):
     return [c for c in df.columns if not str(c).startswith("_")]
 
