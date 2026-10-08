@@ -21,8 +21,11 @@ The sequence type (DNA/protein) is detected automatically and can be overridden.
 | Phylogenetic Tree | Neighbor-Joining or UPGMA on Jukes–Cantor (DNA) / Kimura (protein) corrected distances |
 | Antibody Prediction | ANARCI numbering (IMGT, Kabat, Chothia, Martin, AHo, Wolfguy); FR/CDR regions for IMGT, Kabat, Chothia, Martin |
 | Translate DNA | Six-frame ORF finder with nucleotide coordinates and selectable codon table |
+| Extracted Sequences | FASTA of the chains extracted from uploaded PDB/mmCIF structures |
 | Convert Formats | FASTA, Clustal, PHYLIP (relaxed), Stockholm, NEXUS, EMBL, GenBank |
 | PDB Residue Renumbering | Renumber chains to match target sequences, with insertion codes and per-chain review |
+
+Translate DNA is offered for DNA input and Antibody Prediction for protein input; the menu adapts to the detected sequence type.
 
 ## Install
 
@@ -46,3 +49,9 @@ python precommit_check.py
 ```
 
 Default gap scores are −10 (open) and −0.5 (extend), the EMBOSS needle convention.
+
+## License
+
+MIT License
+
+Copyright (c) 2025 Dawid Zyla

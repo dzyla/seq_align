@@ -278,7 +278,7 @@ def sequence_clustering_section(sequences, seq_type):
             if clustering_method == HIERARCHICAL and 2 < len(ids) <= 200:
                 condensed = squareform(np.clip(1 - matrix, 0, None), checks=False)
                 fig_dg = ff.create_dendrogram(np.arange(len(ids)).reshape(-1, 1), labels=ids,
-                                              distfun=lambda _x: condensed,
+                                              distfun=lambda _x: condensed, color_threshold=1 - threshold,
                                               linkagefun=lambda d: linkage(d, method="average"))
                 fig_dg.update_layout(title="Average-linkage dendrogram (distance = 1 − similarity)", height=450)
                 st.plotly_chart(fig_dg, width="stretch")

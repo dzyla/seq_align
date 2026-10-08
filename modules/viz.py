@@ -33,6 +33,7 @@ DNA_COLORS = {"-": "#ffffff", "A": "#64f73f", "C": "#ffb340", "G": "#eb413c", "T
 OTHER_COLOR = "#bbbbbb"
 HOVER_LIMIT = 200_000      # cells; above this, no per-cell hover text is sent to the browser
 PLOTLY_LIMIT = 2_000_000   # cells; above this, a static image is rendered instead
+LETTER_MAX_COLUMNS = 150  # wider alignments get no letters: cells are too narrow to read
 LETTER_LIMIT = 3_000        # cells; up to this, residue letters are drawn inside the heatmap cells
 
 
@@ -75,7 +76,7 @@ def msa_figure_plotly(codes, ids, seq_type, hover=True):
     if hover:
         heatmap["text"] = codes_to_letters(codes)
         heatmap["hovertemplate"] = "Sequence: %{y}<br>Position: %{x}<br>Residue: %{text}<extra></extra>"
-        if codes.size <= LETTER_LIMIT:
+        if codes.size <= LETTER_LIMIT and codes.shape[1] <= LETTER_MAX_COLUMNS:
             heatmap["texttemplate"] = "%{text}"
             heatmap["textfont"] = dict(size=10, color="#222222")
     else:

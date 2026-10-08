@@ -17,6 +17,9 @@ DEFAULT_EXTEND_GAP = -0.5
 logger = logging.getLogger(__name__)
 
 
+LOLLIPOP_LABEL_LIMIT = 25   # more substitutions than this: no text labels (hover only)
+
+
 @lru_cache(maxsize=None)
 def load_matrix(name):
     """Load a substitution matrix once per process."""
@@ -179,7 +182,7 @@ def pairwise_alignment_section(sequences, seq_type):
         st.caption(note)
 
     st.subheader("🔍 Point Mutations Relative to Reference")
-    fig = mutation_lollipop(result.mutations, result.ref_length)
+    fig = mutation_lollipop(result.mutations, result.ref_length, seq_type)
     if fig is None:
         st.write("No point mutations detected.")
     else:
@@ -240,6 +243,8 @@ class PairwiseResult:
     ref_length: int
     mutations: list = field(default_factory=list)
     notes: list = field(default_factory=list)
+    query_rotation: int = 0   # circular shift applied to the query (0 if none)
+    query_length: int = 0
 
 
 def _circular_rotations(s1, s2, seq_type, open_gap_score, extend_gap_score, circular1, circular2):
@@ -304,6 +309,8 @@ def align_pair(seq1, seq2, seq_type, mode="global", open_gap_score=DEFAULT_OPEN_
         mutations=report_mutations(aligned_ref, aligned_query, ref_start=ref_start,
                                    ref_rotation=rot1, ref_length=len(s1)),
         notes=notes,
+        query_rotation=rot2,
+        query_length=len(s2),
     )
 
 
@@ -330,6 +337,11 @@ def format_alignment_blocks(result, width=60):
             return ((pos - 1 + result.ref_rotation) % result.ref_length) + 1
         return pos
 
+    def query_label(pos):
+        if result.query_rotation and result.query_length and pos > 0:
+            return ((pos - 1 + result.query_rotation) % result.query_length) + 1
+        return pos
+
     ref_count, query_count = result.ref_start, result.query_start
     lines = []
     for i in range(0, len(result.aligned_ref), width):
@@ -342,7 +354,7 @@ def format_alignment_blocks(result, width=60):
         q_start, q_end = query_count + (1 if q_res else 0), query_count + q_res
         lines.append(f"{result.ref_id:<{name_width}} {ref_label(r_start):>6} {r} {ref_label(r_end)}")
         lines.append(f"{'':<{name_width}} {'':>6} {m}")
-        lines.append(f"{result.query_id:<{name_width}} {q_start:>6} {q} {q_end}")
+        lines.append(f"{result.query_id:<{name_width}} {query_label(q_start):>6} {q} {query_label(q_end)}")
         lines.append("")
         ref_count += r_res
         query_count += q_res
@@ -363,19 +375,38 @@ def format_result_text(result):
     return header + format_alignment_blocks(result) + ("\n" + notes if notes else "")
 
 
-def mutation_lollipop(mutations, ref_length):
-    """Stem-and-marker plot of substitutions along the reference; None if there are none."""
+def mutation_lollipop(mutations, ref_length, seq_type=None):
+    """Stem-and-marker plot of substitutions along the reference; None if there are none.
+
+    With `seq_type`, stem height is the substitution-matrix score of the change.
+    """
     if not mutations:
         return None
     positions = [int(re.search(r"\d+", m).group()) for m in mutations]
+    if seq_type:
+        matrix_name = "NUC.4.4" if seq_type == "DNA" else "BLOSUM62"
+        matrix = load_matrix(matrix_name)
+        heights = []
+        for m in mutations:
+            ref_res, alt_res = m[0], m[-1]
+            try:
+                heights.append(float(matrix[ref_res][alt_res]))
+            except (KeyError, IndexError):
+                heights.append(0.0)
+        y_axis = dict(title=f"Substitution score ({matrix_name})", zeroline=True, zerolinewidth=1,
+                      zerolinecolor="#888888")
+    else:
+        heights = [1] * len(positions)
+        y_axis = dict(visible=False, range=[0, 1.6])
+    mode = "markers+text" if len(mutations) <= LOLLIPOP_LABEL_LIMIT else "markers"
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=positions, y=[1] * len(positions), width=max(1, ref_length / 400),
+    fig.add_trace(go.Bar(x=positions, y=heights, width=max(1, ref_length / 400),
                          marker_color="#bbbbbb", hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=positions, y=[1] * len(positions), mode="markers+text", text=mutations,
+    fig.add_trace(go.Scatter(x=positions, y=heights, mode=mode, text=mutations,
                              textposition="top center", marker=dict(size=10, color="#d62728"),
                              hovertemplate="%{text}<extra></extra>"))
     fig.update_layout(title="Substitutions along the reference", xaxis=dict(title="Reference position",
-                      range=[0, ref_length + 1]), yaxis=dict(visible=False, range=[0, 1.6]),
+                      range=[0, ref_length + 1]), yaxis=y_axis,
                       height=260, showlegend=False, margin=dict(t=40, b=40))
     return fig
 

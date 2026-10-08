@@ -247,7 +247,7 @@ def pdb_renumber_section(structures):
         options = [r["target_id"] for r in rows] + [SKIP]
         overrides[chain_id] = st.selectbox(f"Chain {chain_id} target", options,
                                            format_func=lambda v, labels=labels: labels.get(v, v),
-                                           key=f"renumber_target_{chain_id}")
+                                           key=f"renumber_target_{structure_file.digest[:8]}_{chain_id}")
     mappings, logs, visuals = build_mappings(candidates, overrides)
     results = {"mappings": mappings}
 

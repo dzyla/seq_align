@@ -81,3 +81,8 @@ def test_letters_shown_only_for_small_alignments():
     assert msa_figure_plotly(small, ["a", "b"], "Protein").data[0].texttemplate == "%{text}"
     big = alignment_to_codes(["M" * 2000, "K" * 2000])
     assert msa_figure_plotly(big, ["a", "b"], "Protein").data[0].texttemplate is None
+
+
+def test_letters_hidden_for_wide_alignments():
+    wide = alignment_to_codes(["M" * 1000, "K" * 1000, "A" * 1000])
+    assert msa_figure_plotly(wide, ["a", "b", "c"], "Protein").data[0].texttemplate is None

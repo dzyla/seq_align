@@ -118,3 +118,28 @@ def test_lollipop_none_without_mutations():
     assert mutation_lollipop([], 100) is None
     fig = mutation_lollipop(["K2R", "V30A"], 100)
     assert list(fig.data[1].x) == [2, 30]
+
+
+def test_lollipop_labels_only_for_few_mutations():
+    many = [f"A{i}G" for i in range(1, 31)]
+    assert mutation_lollipop(many, 100).data[1].mode == "markers"
+    assert mutation_lollipop(["K2R", "V30A", "A5G"], 100).data[1].mode == "markers+text"
+
+
+def test_lollipop_height_is_substitution_score():
+    from modules.pairwise import load_matrix
+    fig = mutation_lollipop(["W2C"], 10, "Protein")
+    assert list(fig.data[1].y) == [load_matrix("BLOSUM62")["W"]["C"]] == [-2.0]
+    assert fig.layout.yaxis.title.text == "Substitution score (BLOSUM62)"
+
+
+def test_blocks_query_labels_use_original_coordinates_when_circular():
+    import random
+    random.seed(1)
+    ref = "".join(random.choice("ACGT") for _ in range(60))
+    target = ref[7:] + ref[:7]
+    result = align_pair(rec("ref", ref), rec("t", target), "DNA", is_circular2=True)
+    assert result.query_rotation
+    first_q = [l for l in format_alignment_blocks(result).splitlines() if l.startswith("t ")][0].split()
+    expected = ((1 - 1 + result.query_rotation) % result.query_length) + 1
+    assert int(first_q[1]) == expected != 1
