@@ -99,8 +99,11 @@ def make_unique_ids(records):
     return unique
 
 
-def parse_structure_text(text, name, format_name, all_models=False):
-    """Extract one protein sequence per chain from PDB/mmCIF text. Returns (records, error)."""
+def parse_structure_text(text, name, format_name, all_models=False, source="atom"):
+    """Extract one protein sequence per chain from PDB/mmCIF text. Returns (records, error).
+
+    source="atom" uses the modelled residues; source="seqres" uses the SEQRES records (full construct).
+    """
     try:
         base = os.path.splitext(os.path.basename(name))[0]
         if format_name == "PDB":
@@ -109,6 +112,16 @@ def parse_structure_text(text, name, format_name, all_models=False):
             parser = MMCIFParser(QUIET=True)
         else:
             return None, f"Unsupported format: {format_name}"
+        if source == "seqres":
+            seq_format = "pdb-seqres" if format_name == "PDB" else "cif-seqres"
+            records = []
+            for record in SeqIO.parse(StringIO(text), seq_format):
+                chain = record.annotations.get("chain", "_") or "_"
+                records.append(SeqRecord(record.seq, id=f"{base}_{chain}",
+                                         description=f"SEQRES chain {chain} from {name}"))
+            if not records:
+                return None, "No SEQRES records in this file; use the ATOM sequence source instead."
+            return make_unique_ids(records), None
         structure = parser.get_structure(base, StringIO(text))
         models = list(structure) if all_models else list(structure)[:1]
         multi = len(models) > 1
@@ -132,9 +145,9 @@ def parse_structure_text(text, name, format_name, all_models=False):
         return None, f"An error occurred while parsing the {format_name} file: {e}"
 
 
-def parse_sequences_from_structure(file, format_name, all_models=False):
+def parse_sequences_from_structure(file, format_name, all_models=False, source="atom"):
     """File-upload wrapper around parse_structure_text (first model only unless all_models)."""
     file.seek(0)
     raw = file.read()
     text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
-    return parse_structure_text(text, file.name, format_name, all_models)
+    return parse_structure_text(text, file.name, format_name, all_models, source=source)

@@ -1,9 +1,12 @@
 import io
+import pathlib
 
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-from modules.parsers import make_unique_ids, parse_sequences_from_structure
+from modules.parsers import make_unique_ids, parse_sequences_from_structure, parse_structure_text
+
+DATA = pathlib.Path(__file__).parent / "data"
 
 
 def pdb_lines(residues, chain="A"):
@@ -49,3 +52,25 @@ def test_ligands_excluded_and_mse_included():
 def test_make_unique_ids():
     recs = [SeqRecord(Seq("A"), id="x_A"), SeqRecord(Seq("C"), id="x_A"), SeqRecord(Seq("D"), id="y_A")]
     assert [r.id for r in make_unique_ids(recs)] == ["x_A", "x_A_2", "y_A"]
+
+
+def test_seqres_and_atom_sources():
+    text = (DATA / "1crn.pdb").read_text()
+    atom, err = parse_structure_text(text, "1crn.pdb", "PDB", source="atom")
+    seqres, err2 = parse_structure_text(text, "1crn.pdb", "PDB", source="seqres")
+    assert err is None and err2 is None
+    assert [r.id for r in seqres] == ["1crn_A"]
+    assert str(seqres[0].seq) == str(atom[0].seq)
+    assert atom[0].annotations["structure"]["chain"] == "A"
+    assert "structure" not in seqres[0].annotations
+
+
+def test_seqres_cif():
+    seqres, err = parse_structure_text((DATA / "1crn.cif").read_text(), "1crn.cif", "mmCIF", source="seqres")
+    assert err is None and len(seqres[0].seq) == 46
+
+
+def test_seqres_missing_reports_error():
+    text = "ATOM      1  CA  ALA A   1       1.000   0.000   0.000  1.00  0.00           C\nEND\n"
+    records, err = parse_structure_text(text, "x.pdb", "PDB", source="seqres")
+    assert records is None and "SEQRES" in err

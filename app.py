@@ -65,10 +65,10 @@ def _unique_name(name, existing):
         n += 1
 
 
-def _load_structures(files, input_format, all_models):
+def _load_structures(files, input_format, all_models, source):
     records, errors, store = [], [], {}
     for f in files:
-        seqs, err = parse_sequences_from_structure(f, input_format, all_models=all_models)
+        seqs, err = parse_sequences_from_structure(f, input_format, all_models=all_models, source=source)
         if err:
             errors.append(f"{f.name}: {err}")
         else:
@@ -132,14 +132,19 @@ def handle_input(input_format):
             result, error = _load_once(("fetch", fetched.digest), lambda: _load_fetched(fetched))
     elif input_format in STRUCTURE_FORMATS:
         all_models = st.sidebar.checkbox("Extract all models (NMR ensembles)", value=False)
+        source = st.sidebar.radio("Sequence source", ("atom", "seqres"), horizontal=True,
+                                  key="structure_seq_source",
+                                  format_func={"atom": "ATOM (modelled residues)",
+                                               "seqres": "SEQRES (full construct)"}.get,
+                                  help="ATOM: residues with coordinates. SEQRES: the full construct from the file header.")
         files = st.sidebar.file_uploader(
             f"Upload {input_format} File(s)", type=get_file_extensions(input_format),
             key=f"uploader_{input_format}", accept_multiple_files=True,
             help=f"Upload one or more {input_format} files to extract protein sequences",
         )
         if files:
-            key = (input_format, all_models, tuple((f.name, _digest(f.getvalue())) for f in files))
-            result, error = _load_once(key, lambda: _load_structures(files, input_format, all_models))
+            key = (input_format, all_models, source, tuple((f.name, _digest(f.getvalue())) for f in files))
+            result, error = _load_once(key, lambda: _load_structures(files, input_format, all_models, source))
         else:
             _clear_structures()
     elif input_format == "Newick":
