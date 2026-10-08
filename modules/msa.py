@@ -9,7 +9,7 @@ from collections import Counter
 import pandas as pd
 from typing import List, Dict, Tuple
 from modules.utils import have_params_changed, stale_notice
-from modules.viz import msa_to_image, plot_msa_image
+from modules.viz import alignment_to_codes, plot_msa
 from modules.seqtools import clean_sequence, fingerprint
 from modules.phylogeny import TREE_METHODS, TreeError, build_tree_from_alignment, phylogenetic_tree_section
 
@@ -76,8 +76,7 @@ def msa_section(sequences, seq_type):
     with tabs[0]:
         st.subheader("📄 MSA Result")
         st.write(f"Total sequences: {len(aligned)}. MSA length: {len(aligned[0][1])}")
-        msa_image, msa_letters = msa_to_image(serialize_alignment(aligned, "fasta"), "fasta")
-        plot_msa_image(msa_image, msa_letters, plot_method)
+        plot_msa(alignment_to_codes([s for _, s in aligned]), [i for i, _ in aligned], plot_method, seq_type)
         try:
             st.download_button(label="📥 Download MSA", data=serialize_alignment(aligned, msa_output_format),
                                file_name=f"msa_alignment.{msa_output_format}", mime="text/plain")

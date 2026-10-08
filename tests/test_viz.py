@@ -1,0 +1,53 @@
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import to_hex
+
+from modules.viz import (
+    ALPHABET, GAP_CODE, alignment_to_codes, msa_figure_matplotlib, msa_figure_plotly, palette, render_mode,
+)
+
+
+def test_codes_are_uint8_and_map_gaps_and_unknowns():
+    codes = alignment_to_codes(["MK-v", "MK@V"])
+    assert codes.dtype == np.uint8
+    assert codes[0, 2] == GAP_CODE
+    assert ALPHABET[codes[1, 2]] == "X"          # unknown character
+    assert codes[0, 3] == codes[1, 3]            # case-insensitive
+
+
+def test_unequal_lengths_rejected():
+    try:
+        alignment_to_codes(["MK", "M"])
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError")
+
+
+def test_matplotlib_colors_match_palette():
+    codes = alignment_to_codes(["ACDEFGHIKL", "MNPQRSTVWY"])
+    fig = msa_figure_matplotlib(codes, ["a", "b"], "Protein")
+    image = fig.axes[0].images[0]
+    colors = palette("Protein")
+    for code in np.unique(codes):
+        assert to_hex(image.cmap(image.norm(code))) == colors[code]
+    plt.close(fig)
+
+
+def test_gap_is_white_in_both_palettes():
+    assert palette("Protein")[GAP_CODE] == "#ffffff"
+    assert palette("DNA")[GAP_CODE] == "#ffffff"
+
+
+def test_render_mode_thresholds():
+    assert render_mode(10, 100, "Plotly (Interactive)") == "interactive_hover"
+    assert render_mode(500, 1000, "Plotly (Interactive)") == "interactive"
+    assert render_mode(2000, 2000, "Plotly (Interactive)") == "static"
+    assert render_mode(10, 10, "Matplotlib (Static)") == "static"
+
+
+def test_plotly_figure_has_no_hover_text_when_disabled():
+    codes = alignment_to_codes(["MK", "ML"])
+    assert msa_figure_plotly(codes, ["a", "b"], "Protein", hover=False).data[0].text is None
+    assert msa_figure_plotly(codes, ["a", "b"], "Protein", hover=True).data[0].text is not None

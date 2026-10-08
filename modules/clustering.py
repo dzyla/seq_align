@@ -8,9 +8,9 @@ import zipfile
 import io
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from modules.msa import MSAError, aligned_to_msa, cached_run_msa
+from modules.msa import MSAError, cached_run_msa
 from modules.pairwise import get_aligner
-from modules.viz import msa_to_image, plot_msa_image
+from modules.viz import alignment_to_codes, plot_msa
 from collections import deque
 from scipy.cluster.hierarchy import fcluster, leaves_list, linkage
 from scipy.spatial.distance import squareform
@@ -78,11 +78,8 @@ def sequence_clustering_section(sequences, seq_type):
             aligned_seqs = [seq for _, seq in aligned]
             align_len = len(aligned_seqs[0])
 
-            msa_image, msa_letters = msa_to_image(
-                "".join(f">{i}\n{s}\n" for i, s in aligned), "fasta")
-            if msa_image is not None:
-                with st.expander("View MSA Image", expanded=True):
-                    plot_msa_image(msa_image, msa_letters, "Plotly (Interactive)")
+            with st.expander("View MSA Image", expanded=True):
+                plot_msa(alignment_to_codes(aligned_seqs), aligned_ids, "Plotly (Interactive)", seq_type)
 
             coverage = calculate_sequence_coverage(aligned_seqs)
             fig_cov = px.area(pd.DataFrame({"Position": range(1, align_len + 1), "Coverage": coverage}),

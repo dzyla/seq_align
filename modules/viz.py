@@ -1,206 +1,134 @@
-import streamlit as st
+from io import BytesIO
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from Bio import AlignIO
-from io import StringIO, BytesIO
+import streamlit as st
+from matplotlib.colors import ListedColormap
 
-CODE_TO_AA = {
-    0: "-", 1: "A", 2: "C", 3: "D", 4: "E", 5: "F", 6: "G", 7: "H", 8: "I", 9: "K", 10: "L",
-    11: "M", 12: "N", 13: "P", 14: "Q", 15: "R", 16: "S", 17: "T", 18: "V", 19: "W", 20: "Y",
-    21: "X", 22: "B", 23: "J", 24: "O", 25: "Z",
+ALPHABET = "-ACDEFGHIKLMNPQRSTVWYXBZJOU*"
+GAP_CODE = 0
+_UNKNOWN_CODE = ALPHABET.index("X")
+_LUT = np.full(256, _UNKNOWN_CODE, dtype=np.uint8)
+for _i, _ch in enumerate(ALPHABET):
+    _LUT[ord(_ch)] = _i
+    _LUT[ord(_ch.lower())] = _i
+_LUT[ord(".")] = GAP_CODE
+_LETTERS = np.array(list(ALPHABET))
+
+# Clustal X-style residue classes; nucleotides use the common A/C/G/T scheme.
+PROTEIN_COLORS = {
+    "-": "#ffffff",
+    **dict.fromkeys("AILMFWV", "#80a0f0"),
+    "C": "#f08080",
+    **dict.fromkeys("KR", "#f01505"),
+    **dict.fromkeys("DE", "#c048c0"),
+    **dict.fromkeys("NQST", "#15c015"),
+    "G": "#f09048",
+    "P": "#c0c000",
+    **dict.fromkeys("HY", "#15a4a4"),
 }
-
-def msa_to_image(alignment_text: str, format: str) -> tuple:
-    """
-    Converts Multiple Sequence Alignment (MSA) to numerical image data and amino acid array.
-
-    Parameters:
-        alignment_text (str): The MSA text in the specified format
-        format (str): The format of the MSA text (e.g., 'fasta', 'clustal')
-
-    Returns:
-        tuple: (msa_image, msa_letters) - numerical representation and letter representation
-    """
-    try:
-        alignment = AlignIO.read(StringIO(alignment_text), format)
-    except Exception as e:
-        st.error(f"An error occurred while parsing the MSA alignment: {e}")
-        return None, None
-
-    AA_CODES = {
-        "-": 0, "A": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6, "H": 7, "I": 8, "K": 9, "L": 10,
-        "M": 11, "N": 12, "P": 13, "Q": 14, "R": 15, "S": 16, "T": 17, "V": 18, "W": 19, "Y": 20,
-        "X": 21, "B": 22, "J": 23, "O": 24, "Z": 25,
-    }
-
-    msa_image = np.zeros((len(alignment), alignment.get_alignment_length()), dtype=int)
-    msa_letters = np.empty((len(alignment), alignment.get_alignment_length()), dtype=object)
-
-    for i, record in enumerate(alignment):
-        for j, aa in enumerate(str(record.seq)):
-            code = AA_CODES.get(aa.upper(), 0)
-            msa_image[i, j] = code
-            msa_letters[i, j] = aa.upper()
-
-    return msa_image, msa_letters
+DNA_COLORS = {"-": "#ffffff", "A": "#64f73f", "C": "#ffb340", "G": "#eb413c", "T": "#3c88ee", "U": "#3c88ee"}
+OTHER_COLOR = "#bbbbbb"
+HOVER_LIMIT = 200_000      # cells; above this, no per-cell hover text is sent to the browser
+PLOTLY_LIMIT = 2_000_000   # cells; above this, a static image is rendered instead
 
 
-def plot_msa_image(msa_image: np.ndarray, msa_letters: np.ndarray, plot_method: str):
-    """
-    Plots the Multiple Sequence Alignment (MSA) as a heatmap.
+def palette(seq_type):
+    """Hex color for every code in ALPHABET."""
+    colors = DNA_COLORS if seq_type == "DNA" else PROTEIN_COLORS
+    return [colors.get(ch, OTHER_COLOR) for ch in ALPHABET]
 
-    Parameters:
-        msa_image (np.ndarray): Numerical representation of the MSA
-        msa_letters (np.ndarray): Letter representation of the MSA
-        plot_method (str): The plotting method ('Plotly (Interactive)' or 'Matplotlib (Static)')
-    """
-    if msa_image is None or msa_letters is None:
-        st.error("No MSA image data to plot.")
-        return
 
-    if msa_image.size == 0 or msa_letters.size == 0:
-        st.error("MSA image data is empty.")
-        return
+def alignment_to_codes(seqs):
+    """Encode equal-length aligned strings as a uint8 matrix of ALPHABET indices."""
+    if not seqs:
+        return np.zeros((0, 0), dtype=np.uint8)
+    length = len(seqs[0])
+    if any(len(s) != length for s in seqs):
+        raise ValueError("All aligned sequences must have the same length.")
+    raw = np.frombuffer("".join(seqs).encode("ascii", errors="replace"), dtype=np.uint8)
+    return _LUT[raw.reshape(len(seqs), length)]
 
-    if msa_image.shape != msa_letters.shape:
-        st.error("Mismatch between msa_image and msa_letters dimensions.")
-        return
 
-    if plot_method == "Plotly (Interactive)":
-        plot_msa_image_plotly(msa_image, msa_letters)
-    elif plot_method == "Matplotlib (Static)":
-        plot_msa_image_matplotlib(msa_image, msa_letters)
+def codes_to_letters(codes):
+    return _LETTERS[codes]
+
+
+def render_mode(n_rows, n_cols, method):
+    cells = n_rows * n_cols
+    if method.startswith("Matplotlib") or cells > PLOTLY_LIMIT:
+        return "static"
+    return "interactive_hover" if cells <= HOVER_LIMIT else "interactive"
+
+
+def msa_figure_plotly(codes, ids, seq_type, hover=True):
+    colors = palette(seq_type)
+    k = len(colors)
+    colorscale = []
+    for i, color in enumerate(colors):
+        colorscale += [[i / k, color], [(i + 1) / k, color]]
+    heatmap = dict(z=codes, x=np.arange(1, codes.shape[1] + 1), y=list(ids), colorscale=colorscale,
+                   zmin=-0.5, zmax=k - 0.5, showscale=False)
+    if hover:
+        heatmap["text"] = codes_to_letters(codes)
+        heatmap["hovertemplate"] = "Sequence: %{y}<br>Position: %{x}<br>Residue: %{text}<extra></extra>"
     else:
-        st.error("Unsupported plotting method selected.")
-
-
-def plot_msa_image_plotly(msa_image: np.ndarray, msa_letters: np.ndarray):
-    """
-    Plots the MSA as an interactive heatmap using Plotly.
-
-    Parameters:
-        msa_image (np.ndarray): Numerical representation of the MSA
-        msa_letters (np.ndarray): Letter representation of the MSA
-    """
-    msa_image_list = msa_image.tolist()
-    msa_letters_list = msa_letters.tolist()
-
-    hover_text = [
-        [f"Position: {x}<br>Sequence: {y}<br>Amino Acid: {aa}"
-         for x, aa in enumerate(row, start=1)]
-        for y, row in enumerate(msa_letters_list, start=1)
-    ]
-
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=msa_image_list,
-            text=hover_text,
-            hoverinfo="text",
-            colorscale="Spectral",
-            showscale=False
-        )
-    )
-
-    fig.update_traces(hovertemplate="%{text}<extra></extra>")
+        heatmap["hovertemplate"] = "Sequence: %{y}<br>Position: %{x}<extra></extra>"
+    fig = go.Figure(go.Heatmap(**heatmap))
     fig.update_layout(
-        title="Multiple Sequence Alignment Heatmap (Plotly)",
-        xaxis_title="MSA Residue Position",
-        yaxis_title="Sequence Number",
-        xaxis=dict(ticks='', showticklabels=True),
-        yaxis=dict(ticks='', showticklabels=True),
-        plot_bgcolor='white',
-        height=600
+        title="Multiple Sequence Alignment",
+        xaxis_title="Alignment position",
+        yaxis=dict(autorange="reversed", showticklabels=len(ids) <= 60),
+        height=min(900, 200 + 14 * len(ids)),
+        plot_bgcolor="white",
     )
-
-    st.plotly_chart(fig, width="stretch")
-
-    try:
-        img_bytes = fig.to_image(format="png")
-    except Exception as e:
-        st.warning("High-resolution image export failed (Kaleido might be missing). Falling back to standard resolution.")
-
-        fig_mpl, ax = plt.subplots(figsize=(20, 7))
-        cax = ax.imshow(msa_image, cmap='Spectral', aspect='auto', interpolation='nearest')
-        cmap = plt.get_cmap('Spectral', 26)
-        ax.set_title("Multiple Sequence Alignment", fontsize=14)
-        ax.set_xlabel("MSA Residue Position", fontsize=12)
-        ax.set_ylabel("Sequence Number", fontsize=12)
-
-        unique_values = np.unique(msa_image)
-        handles = []
-        labels = []
-        for val in unique_values:
-            label = CODE_TO_AA.get(val, "?")
-            handles.append(mpatches.Patch(color=cmap(val), label=label))
-            labels.append(label)
-
-        ax.legend(handles=handles, labels=labels, title="Amino Acids", bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
-        plt.tight_layout()
-
-        buf = BytesIO()
-        plt.savefig(buf, format="png", dpi=300, bbox_inches='tight')
-        plt.close(fig_mpl)
-        buf.seek(0)
-        img_bytes = buf
-
-    st.download_button(
-        label="📥 Download MSA Heatmap (PNG)",
-        data=img_bytes,
-        file_name="msa_heatmap.png",
-        mime="image/png"
-    )
+    return fig
 
 
-def plot_msa_image_matplotlib(msa_image: np.ndarray, msa_letters: np.ndarray):
-    """
-    Plots the MSA as a static heatmap using Matplotlib.
-
-    Parameters:
-        msa_image (np.ndarray): Numerical representation of the MSA
-        msa_letters (np.ndarray): Letter representation of the MSA
-    """
-    img_buf = _plot_msa_image_matplotlib_subset(msa_image, msa_letters, 0, 0)
-    if img_buf:
-        st.download_button(
-            label="📥 Download MSA Heatmap (PNG)",
-            data=img_buf,
-            file_name="msa_heatmap.png",
-            mime="image/png"
-        )
-
-def _plot_msa_image_matplotlib_subset(msa_image_subset: np.ndarray, msa_letters_subset: np.ndarray, seq_offset: int, res_offset: int):
-    """
-    Helper function to plot a subset of the MSA using Matplotlib.
-
-    Parameters:
-        msa_image_subset (np.ndarray): Subset of the numerical MSA representation
-        msa_letters_subset (np.ndarray): Subset of the letter MSA representation
-        seq_offset (int): Sequence offset for labeling
-        res_offset (int): Residue offset for labeling
-    """
-    fig, ax = plt.subplots(figsize=(20, 7))
-    cax = ax.imshow(msa_image_subset, cmap='Spectral', aspect='auto', interpolation='nearest')
-    cmap = plt.get_cmap('Spectral', 26)
+def msa_figure_matplotlib(codes, ids, seq_type):
+    colors = palette(seq_type)
+    k = len(colors)
+    fig, ax = plt.subplots(figsize=(20, max(3, min(30, 0.25 * len(ids) + 2))))
+    ax.imshow(codes, cmap=ListedColormap(colors), vmin=-0.5, vmax=k - 0.5, aspect="auto", interpolation="nearest")
     ax.set_title("Multiple Sequence Alignment", fontsize=14)
-    ax.set_xlabel("MSA Residue Position", fontsize=12)
-    ax.set_ylabel("Sequence Number", fontsize=12)
+    ax.set_xlabel("Alignment position", fontsize=12)
+    if len(ids) <= 60:
+        ax.set_yticks(range(len(ids)))
+        ax.set_yticklabels(ids, fontsize=8)
+    else:
+        ax.set_ylabel("Sequence", fontsize=12)
+    handles = [mpatches.Patch(facecolor=colors[c], edgecolor="#999999", label=ALPHABET[c])
+               for c in np.unique(codes)]
+    ax.legend(handles=handles, title="Residues", bbox_to_anchor=(1.01, 1), loc="upper left", borderaxespad=0.)
+    fig.tight_layout()
+    return fig
 
-    unique_values = np.unique(msa_image_subset)
-    handles = []
-    labels = []
-    for val in unique_values:
-        label = CODE_TO_AA.get(val, "?")
-        handles.append(mpatches.Patch(color=cmap(val), label=label))
-        labels.append(label)
 
-    ax.legend(handles=handles, labels=labels, title="Amino Acids", bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
-    plt.tight_layout()
-
+@st.cache_data(max_entries=4, show_spinner=False)
+def render_msa_png(codes, ids, seq_type):
+    fig = msa_figure_matplotlib(codes, list(ids), seq_type)
     buf = BytesIO()
-    plt.savefig(buf, format="png", dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    buf.seek(0)
-    st.image(buf, caption="MSA Heatmap", width="stretch")
-    return buf
+    try:
+        fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+    finally:
+        plt.close(fig)
+    return buf.getvalue()
+
+
+def plot_msa(codes, ids, method="Plotly (Interactive)", seq_type="Protein"):
+    """Show an MSA heatmap sized to the alignment, plus a PNG download."""
+    if codes.size == 0:
+        st.error("No alignment to plot.")
+        return
+    mode = render_mode(codes.shape[0], codes.shape[1], method)
+    png = render_msa_png(codes, tuple(ids), seq_type)
+    if mode == "static":
+        if not method.startswith("Matplotlib"):
+            st.info("Alignment is too large for the interactive view; showing a static image.")
+        st.image(png, width="stretch")
+    else:
+        st.plotly_chart(msa_figure_plotly(codes, ids, seq_type, hover=mode == "interactive_hover"), width="stretch")
+    st.download_button("📥 Download MSA Heatmap (PNG)", data=png, file_name="msa_heatmap.png",
+                       mime="image/png", on_click="ignore")
