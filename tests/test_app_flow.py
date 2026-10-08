@@ -100,3 +100,11 @@ def test_load_example_button():
     at.button(key="load_example").click().run()
     assert not at.exception
     assert len(at.session_state["input_cache"][0]) == 6
+
+
+def test_analysis_falls_back_when_unavailable():
+    at = load(">x\nATGCATGCATGCATGC\n>y\nATGCATGAATGCATGC\n")
+    at.selectbox(key="analysis_select").select("Translate DNA").run()
+    at.selectbox(key="seq_type_select").select("Protein").run()
+    assert not at.exception
+    assert at.selectbox(key="analysis_select").value != "Translate DNA"

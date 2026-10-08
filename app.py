@@ -10,6 +10,7 @@ from modules.clustering import sequence_clustering_section
 from modules.conversion import format_conversion_section
 from modules.dna import dna_translation_section
 from modules.msa import msa_section
+from modules.navigation import available_analyses
 from modules.pairwise import pairwise_alignment_section
 from modules.parsers import (
     make_unique_ids, parse_sequences_from_file, parse_sequences_from_structure, parse_sequences_from_text,
@@ -181,12 +182,9 @@ Mutation positions are always reported in reference-sequence coordinates.
     structures = st.session_state.get("structures", {})
     show_dataset_overview(sequences, seq_type)
 
-    if input_format in STRUCTURE_FORMATS:
-        options = ("Extracted Sequences", "Sequence Clustering", "Antibody Prediction", "Phylogenetic Tree",
-                   "PDB Residue Renumbering")
-    else:
-        options = ("Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Antibody Prediction",
-                   "Convert Formats", "Phylogenetic Tree", "Translate DNA")
+    options = available_analyses(bool(sequences), bool(structures), seq_type)
+    if st.session_state.get("analysis_select") not in options:
+        st.session_state.analysis_select = options[0]
     alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options, key="analysis_select")
 
     if alignment_mode == "Extracted Sequences":
@@ -209,10 +207,7 @@ Mutation positions are always reported in reference-sequence coordinates.
     elif alignment_mode == "Antibody Prediction":
         antibody_prediction_section(sequences)
     elif alignment_mode == "Translate DNA":
-        if seq_type == "DNA":
-            dna_translation_section(sequences)
-        else:
-            st.warning("Translation is only available for DNA sequences. Please select DNA as sequence type.")
+        dna_translation_section(sequences)
     elif alignment_mode == "Convert Formats":
         format_conversion_section(sequences, input_format, seq_type)
     elif alignment_mode == "PDB Residue Renumbering":
