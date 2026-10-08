@@ -9,7 +9,7 @@ from Bio import AlignIO, SeqIO
 from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from pyfamsa import Aligner as PyFAMSAAligner, Sequence as PyFAMSASequence
+import multiprocessing
 from io import StringIO
 from collections import Counter
 import pandas as pd
@@ -320,12 +320,50 @@ def run_msa(pairs, seq_type, method="FAMSA"):
         raise MSAError(f"Sequences too short to align (need at least 2 residues): {', '.join(short)}")
     if method == "MAFFT":
         return run_mafft(cleaned, seq_type)
-    famsa_input = [PyFAMSASequence(seq_id.encode(), seq.encode()) for seq_id, seq in cleaned]
+    return run_famsa(cleaned)
+
+
+FAMSA_TIMEOUT = 600
+FAMSA_CRASH_MESSAGE = ("FAMSA crashed on this input (this happens when a sequence shares no residues with "
+                       "the others). Try MAFFT or check the input.")
+
+
+def _famsa_child(conn, pairs):
     try:
-        msa = PyFAMSAAligner(guide_tree="upgma").align(famsa_input)
-    except Exception as e:
-        raise MSAError(f"FAMSA failed: {e}") from e
-    return [(s.id.decode(), s.sequence.decode()) for s in msa]
+        from modules.famsa_worker import align
+        conn.send(("ok", align(pairs)))
+    except Exception as e:  # reported to the parent as text
+        conn.send(("error", str(e)))
+    finally:
+        conn.close()
+
+
+def run_famsa(pairs):
+    """Run pyFAMSA in a spawned child process: it can abort the interpreter, which try/except cannot catch."""
+    ctx = multiprocessing.get_context("spawn")
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    proc = ctx.Process(target=_famsa_child, args=(child_conn, list(pairs)), daemon=True)
+    proc.start()
+    child_conn.close()
+    message = None
+    try:
+        if parent_conn.poll(FAMSA_TIMEOUT):
+            try:
+                message = parent_conn.recv()
+            except EOFError:
+                message = None
+    finally:
+        parent_conn.close()
+        proc.join(5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
+    if message is None:
+        raise MSAError(FAMSA_CRASH_MESSAGE)
+    status, payload = message
+    if status == "error":
+        raise MSAError(f"FAMSA failed: {payload}")
+    return payload
 
 
 def trim_columns(aligned_pairs, max_gap_fraction):

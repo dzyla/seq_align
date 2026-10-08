@@ -97,6 +97,24 @@ def test_single_residue_sequence_rejected_before_aligning(monkeypatch):
 
     def boom(*a, **k):
         raise AssertionError("must not reach FAMSA")
-    monkeypatch.setattr(msa, "PyFAMSAAligner", boom)
+    monkeypatch.setattr(msa, "run_famsa", boom)
     with pytest.raises(MSAError, match="too short.*a"):
         run_msa([("a", "M"), ("b", "MKV")], "Protein")
+
+
+@pytest.mark.parametrize("pairs", [
+    [("a", "AAAA"), ("b", "WWWW")],
+    [("a", "MKVL"), ("b", "WWWW")],
+    [("a", "MKVLAAGIVGLLAQWERTYASDFGKLCV"), ("b", "HHHHHHHHHH")],
+])
+def test_famsa_crash_inputs_do_not_kill_the_process(pairs):
+    try:
+        aligned = run_msa(pairs, "Protein")
+        assert [i for i, _ in aligned] == [i for i, _ in pairs]
+    except MSAError:
+        pass  # a clean error is acceptable; the point is that the test process survives
+
+
+def test_famsa_keeps_input_ids():
+    aligned = run_msa([("seq one", "MKVLAAGIVG"), ("seq_two", "MKVLAGIVG")], "Protein")
+    assert [i for i, _ in aligned] == ["seq one", "seq_two"]
