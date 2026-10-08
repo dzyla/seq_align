@@ -80,13 +80,15 @@ def logo_matrix(aligned, seq_type="Protein", start=1, end=None):
     """Information content (bits) per residue for alignment columns start..end (1-based, inclusive),
     against a uniform background over the full alphabet, without pseudocounts."""
     alphabet = DNA_ALPHABET if seq_type == "DNA" else PROTEIN_ALPHABET
+    # Gaps plus ambiguity codes; protein N (asparagine) is a residue and is counted.
+    ignore = "-.NRYKMSWBDHV" if seq_type == "DNA" else "-.XBZJOU*"
     window = [s[start - 1:end].upper() for s in aligned]
     width = len(window[0]) if window else 0
     if not any(c in alphabet for s in window for c in s):
         # logomaker rejects windows with no countable residues (all gaps or ambiguity codes)
         matrix = pd.DataFrame(0.0, index=range(width), columns=alphabet)
     else:
-        counts = logomaker.alignment_to_matrix(window, to_type="counts", characters_to_ignore=".-XNBZJOU*")
+        counts = logomaker.alignment_to_matrix(window, to_type="counts", characters_to_ignore=ignore)
         counts = counts.reindex(columns=alphabet, fill_value=0)
         # Information per column against a uniform background (logomaker's definition); gap-only rows are zero.
         values = counts.to_numpy(dtype=float)

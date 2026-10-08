@@ -108,3 +108,19 @@ def test_logo_gap_column_inside_multi_column_window():
     assert not m.isna().any().any()
     assert m.sum(axis=1).iloc[2] == 0
     assert m.sum(axis=1).iloc[0] == pytest.approx(math.log2(20), abs=1e-6)
+
+
+def test_logo_protein_asparagine_column_counts():
+    m = logo_matrix(["N", "N", "N"])
+    assert m.sum(axis=1).iloc[0] == pytest.approx(math.log2(20), abs=1e-6)
+
+
+def test_logo_asparagine_among_gaps_in_window():
+    m = logo_matrix(["MK-X", "MKN-", "MR--"], "Protein", 2, 4)
+    assert m.index.tolist() == [2, 3, 4]
+    assert m.sum(axis=1).loc[3] == pytest.approx(math.log2(20), abs=1e-6)
+
+
+def test_logo_dna_ambiguity_column_is_zero():
+    m = logo_matrix(["N", "N", "N"], seq_type="DNA")
+    assert m.sum(axis=1).iloc[0] == 0
