@@ -141,12 +141,27 @@ class TestRenumberOverrides(unittest.TestCase):
         self.targets = [SeqRecord(Seq("MACG"), id="best"), SeqRecord(Seq("WWWWACG"), id="other")]
 
     def test_default_picks_best(self):
-        mappings, _, _ = prepare_renumbering(self.structure, self.targets)
+        mappings, logs, _ = prepare_renumbering(self.structure, self.targets)
         self.assertEqual(mappings["A"], {0: 2, 1: 3, 2: 4})
+        self.assertTrue(any("best match is best" in m for m in logs), logs)
 
     def test_override_other_target(self):
-        mappings, _, _ = prepare_renumbering(self.structure, self.targets, overrides={"A": "other"})
+        mappings, logs, _ = prepare_renumbering(self.structure, self.targets, overrides={"A": "other"})
         self.assertEqual(mappings["A"], {0: 5, 1: 6, 2: 7})
+        self.assertTrue(any("selected other" in m for m in logs), logs)
+
+    def test_explicit_best_choice_is_worded_as_best_match(self):
+        _, logs, _ = prepare_renumbering(self.structure, self.targets, overrides={"A": "best"})
+        self.assertTrue(any("best match is best" in m for m in logs), logs)
+        self.assertFalse(any("selected best" in m for m in logs), logs)
+
+    def test_ligand_only_chain_is_logged_and_skipped(self):
+        text = _pdb([("ATOM", "ALA", 1, " "), ("ATOM", "CYS", 2, " "), ("ATOM", "GLY", 3, " ")]).replace("END\n", "")
+        text += _pdb([("HETATM", "NAG", 1, " ")], chain="B")
+        structure = _structure(text)
+        mappings, logs, _ = prepare_renumbering(structure, self.targets)
+        self.assertEqual(set(mappings), {"A"})
+        self.assertIn("Chain B: no protein residues found, skipping.", logs)
 
     def test_override_skip_chain(self):
         from modules.pdb_renumber import SKIP

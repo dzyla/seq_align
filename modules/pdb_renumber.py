@@ -98,6 +98,7 @@ def score_targets(structure, target_sequences):
     for chain in next(iter(structure)):
         chain_seq = chain_sequence(polymer_residues(chain))
         if not chain_seq or set(chain_seq) == {"X"}:
+            candidates[chain.id] = []
             continue
         rows = []
         for target in target_sequences:
@@ -116,7 +117,7 @@ def build_mappings(candidates, overrides=None):
     mappings, logs, visuals = {}, [], []
     for chain_id, rows in candidates.items():
         if not rows:
-            logs.append(f"Chain {chain_id}: no target sequences provided.")
+            logs.append(f"Chain {chain_id}: no protein residues found, skipping.")
             continue
         choice = overrides.get(chain_id)
         if choice == SKIP:
@@ -130,7 +131,8 @@ def build_mappings(candidates, overrides=None):
         mappings[chain_id] = mapping
         visuals.append((chain_id, row["target_id"],
                         f"Target ({row['target_id']}): {row['aligned_t']}\nChain  ({chain_id})       : {row['aligned_c']}"))
-        message = (f"Chain {chain_id}: {'selected' if choice else 'best match is'} {row['target_id']} with "
+        selected = choice is not None and row["target_id"] != rows[0]["target_id"]
+        message = (f"Chain {chain_id}: {'selected' if selected else 'best match is'} {row['target_id']} with "
                    f"{row['matches']} identical residues ({row['identity']:.1%} identity over aligned columns).")
         if row["identity"] < 0.5:
             message += " ⚠️ Low identity: check that this is the right target."
@@ -238,6 +240,8 @@ def pdb_renumber_section(structures):
     st.subheader("Interactive Review & Confirmation")
     overrides = {}
     for chain_id, rows in candidates.items():
+        if not rows:
+            continue
         labels = {r["target_id"]: f"{r['target_id']} — {r['identity']:.1%} identity, {r['matches']} identical"
                   for r in rows}
         options = [r["target_id"] for r in rows] + [SKIP]
