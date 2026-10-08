@@ -3,7 +3,7 @@ import os
 from io import StringIO
 from Bio import SeqIO, Phylo
 from modules.utils import init_session_state, reset_results, get_file_extensions
-from modules.parsers import parse_sequences_from_text, parse_sequences_from_file, parse_sequences_from_structure
+from modules.parsers import parse_sequences_from_text, parse_sequences_from_file, parse_sequences_from_structure, make_unique_ids
 from modules.pairwise import pairwise_alignment_section
 from modules.msa import msa_section
 from modules.best_match import best_match_finder_section
@@ -43,6 +43,7 @@ def handle_input(input_format):
             else:
                 sequences = st.session_state.sequences
     elif input_format in ["PDB", "mmCIF"]:
+        all_models = st.sidebar.checkbox("Extract all models (NMR ensembles)", value=False)
         uploaded_files = st.sidebar.file_uploader(
             f"Upload {input_format} File(s)",
             type=get_file_extensions(input_format),
@@ -54,7 +55,7 @@ def handle_input(input_format):
             # Process multiple files
             all_sequences = []
             for uploaded_file in uploaded_files:
-                sequences, error = parse_sequences_from_structure(uploaded_file, input_format)
+                sequences, error = parse_sequences_from_structure(uploaded_file, input_format, all_models=all_models)
                 if error:
                     st.sidebar.error(f"Error in file {uploaded_file.name}: {error}")
                 else:
@@ -62,7 +63,7 @@ def handle_input(input_format):
 
             if all_sequences:
                 st.sidebar.success(f"Successfully extracted {len(all_sequences)} sequences from {len(uploaded_files)} file(s).")
-                st.session_state.sequences = all_sequences
+                st.session_state.sequences = make_unique_ids(all_sequences)
         else:
             # Clear sequences if no files are uploaded
             if 'sequences' in st.session_state:

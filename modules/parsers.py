@@ -1,12 +1,9 @@
-import streamlit as st
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from Bio.PDB import PDBParser, MMCIFParser, PPBuilder
+from Bio.PDB import PDBParser, MMCIFParser
 from io import StringIO
 import os
-import tempfile
-import traceback
 from modules.utils import amino_acid_map
 
 def parse_sequences_from_text(text):
@@ -79,116 +76,65 @@ def parse_sequences_from_file(file, format_name):
         return None, f"Error parsing {format_name} file: {e}"
 
 
-def parse_sequences_from_structure(file, format_name):
+def polymer_residues(chain):
+    """Residues of the polymer: standard residues plus modified amino acids such as MSE.
+
+    Waters and ligands (e.g. NAG, HEM) are excluded.
     """
-    Parse sequences from PDB or mmCIF structure files.
+    return [res for res in chain
+            if res.id[0] == " " or (res.id[0].startswith("H_") and res.resname.strip() in amino_acid_map)]
 
-    Parameters:
-        file: Uploaded file object
-        format_name (str): Format of the file ('PDB' or 'mmCIF')
 
-    Returns:
-        tuple: (sequences, error) - List of sequence records or None, and error message or None
+def make_unique_ids(records):
+    """Return records with repeated IDs suffixed _2, _3, ... (first occurrence unchanged)."""
+    seen = {}
+    unique = []
+    for record in records:
+        count = seen.get(record.id, 0) + 1
+        seen[record.id] = count
+        if count > 1:
+            record = SeqRecord(record.seq, id=f"{record.id}_{count}", name=record.name,
+                               description=record.description, annotations=dict(record.annotations))
+        unique.append(record)
+    return unique
+
+
+def parse_sequences_from_structure(file, format_name, all_models=False):
+    """
+    Extract one protein sequence per chain from a PDB or mmCIF upload.
+
+    Only the first model is used unless all_models is True (NMR ensembles).
+    Returns (records, None) or (None, error message).
     """
     try:
         file.seek(0)
-        file_content = file.read()
-        file_basename = os.path.splitext(os.path.basename(file.name))[0]
+        raw = file.read()
+        text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+        base = os.path.splitext(os.path.basename(file.name))[0]
+        if format_name == "PDB":
+            parser = PDBParser(QUIET=True)
+        elif format_name == "mmCIF":
+            parser = MMCIFParser(QUIET=True)
+        else:
+            return None, f"Unsupported format: {format_name}"
+        structure = parser.get_structure(base, StringIO(text))
 
-        # Use temporary files for reliable parsing
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{format_name.lower()}") as temp_file:
-            temp_file.write(file_content)
-            temp_filepath = temp_file.name
+        models = list(structure) if all_models else list(structure)[:1]
+        multi = len(models) > 1
+        sequences = []
+        for model_idx, model in enumerate(models, 1):
+            for chain in model:
+                residues = polymer_residues(chain)
+                letters = [amino_acid_map.get(res.resname.strip(), "X") for res in residues]
+                if not letters or all(letter == "X" for letter in letters):
+                    continue  # empty, nucleic acid, or unknown polymer
+                chain_label = chain.id.strip() or "_"
+                seq_id = f"{base}_m{model_idx}_{chain_label}" if multi else f"{base}_{chain_label}"
+                description = f"Chain {chain_label} from {file.name}" + (f", model {model_idx}" if multi else "")
+                sequences.append(SeqRecord(Seq("".join(letters)), id=seq_id, description=description))
 
-        try:
-            # Parse the structure
-            if format_name == "PDB":
-                parser = PDBParser(QUIET=True)
-                structure = parser.get_structure(file_basename, temp_filepath)
-            elif format_name == "mmCIF":
-                parser = MMCIFParser(QUIET=True)
-                structure = parser.get_structure(file_basename, temp_filepath)
-            else:
-                return None, f"Unsupported format: {format_name}"
-
-            # Extract sequences using multiple methods
-            sequences = []
-            ppb = PPBuilder()
-
-            with st.sidebar.expander("Structure processing details"):
-                for model_idx, model in enumerate(structure, 1):
-                    st.write(f"Processing model {model_idx}...")
-
-                    for chain in model:
-                        chain_id = chain.id
-                        if chain_id == " " or not list(chain.get_residues()):
-                            continue
-
-                        st.write(f"Extracting chain {chain_id}...")
-
-                        # Method 1: Use PPBuilder
-                        peptides = list(ppb.build_peptides(chain))
-                        if peptides:
-                            sequence = "".join(str(pp.get_sequence()) for pp in peptides)
-                            if sequence:
-                                seq_record = SeqRecord(
-                                    Seq(sequence),
-                                    id=f"{file_basename}_{chain_id}",
-                                    description=f"Chain {chain_id} from {file.name}"
-                                )
-                                sequences.append(seq_record)
-                                st.write(f"✅ Extracted {len(sequence)} residues")
-                                continue
-
-                        # Method 2: Manual extraction for problematic chains
-                        st.write("Standard extraction failed, trying manual extraction...")
-                        try:
-                            aa_sequence = ""
-                            valid_residues = 0
-
-                            for res in chain:
-                                # Skip non-standard residues and waters
-                                if res.id[0] != " " and not res.id[0].startswith("H_"):
-                                    continue
-
-                                resname = res.resname.strip()
-                                aa = amino_acid_map.get(resname, None)
-                                if aa:
-                                    aa_sequence += aa
-                                    valid_residues += 1
-                                elif len(resname) == 3 and resname[0].isalpha():
-                                    aa_sequence += "X"
-                                    valid_residues += 1
-
-                            if valid_residues >= 5:  # At least 5 valid residues
-                                seq_record = SeqRecord(
-                                    Seq(aa_sequence),
-                                    id=f"{file_basename}_{chain_id}_manual",
-                                    description=f"Manually extracted from chain {chain_id}"
-                                )
-                                sequences.append(seq_record)
-                                st.write(f"✅ Manually extracted {valid_residues} residues")
-                        except Exception as chain_err:
-                            st.write(f"❌ Failed manual extraction: {chain_err}")
-
-            if not sequences:
-                return None, "No protein sequences could be extracted from the structure file."
-
-            # Check for duplicate sequence IDs
-            sequence_ids = set()
-            for seq in sequences:
-                if seq.id in sequence_ids:
-                    return None, f"Duplicate sequence ID found: '{seq.id}'. Each sequence must have a unique ID."
-                sequence_ids.add(seq.id)
-
-            return sequences, None
-        finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_filepath)
-            except:
-                pass
-
+        if not sequences:
+            return None, "No protein sequences could be extracted from the structure file."
+        return make_unique_ids(sequences), None
     except Exception as e:
-        traceback.print_exc()  # For debugging
-        return None, f"An error occurred while parsing the {format_name} file: {str(e)}"
+        return None, f"An error occurred while parsing the {format_name} file: {e}"
