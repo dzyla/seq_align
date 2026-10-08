@@ -1,11 +1,11 @@
-streamlit
-biopython
-numpy
-plotly
-matplotlib
-typing-extensions
-kaleido
-# Install pyfamsa from a wheel file for better compatibility on hosted servers
+streamlit==1.60.0
+biopython==1.84
+numpy==1.26.4
+pandas==2.2.3
+plotly==5.24.1
+matplotlib==3.9.2
+scipy==1.14.1
+scikit-learn==1.8.0
+kaleido==0.2.1
+# pyFAMSA wheel is pinned for compatibility on hosted servers
 pyfamsa==0.3.2
-pandas
-scikit-learn

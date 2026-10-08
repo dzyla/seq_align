@@ -170,7 +170,7 @@ def best_match_finder_section(sequences, seq_type):
                 yaxis_title="Count",
                 bargap=0.1
             )
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width="stretch")
 
         with col_plot2:
             # Scatter Plot: Score vs Length
@@ -186,14 +186,14 @@ def best_match_finder_section(sequences, seq_type):
                 xaxis_title="Sequence Length",
                 yaxis_title="Alignment Score"
             )
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            st.plotly_chart(fig_scatter, width="stretch")
 
         # Results Table
         st.subheader("📋 Results Table")
 
         # Reorder columns
         display_cols = ['Rank', 'Sequence ID', 'Score', 'Length', 'Normalized Score']
-        st.dataframe(df_results[display_cols], use_container_width=True)
+        st.dataframe(df_results[display_cols], width="stretch")
 
         # Download results
         csv = df_results[display_cols].to_csv(index=False)

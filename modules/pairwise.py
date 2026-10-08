@@ -181,7 +181,7 @@ def pairwise_alignment_section(sequences, seq_type):
                 height=300,
                 showlegend=False
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             csv_mutations = convert_mutations_to_csv(st.session_state.pairwise_mutations)
             if csv_mutations:

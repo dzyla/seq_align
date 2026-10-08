@@ -85,7 +85,7 @@ def sequence_clustering_section(sequences, seq_type):
 
             fig_cov = px.area(df_cov, x="Position", y="Coverage", title="Sequence Coverage per Position")
             fig_cov.update_layout(height=250, margin=dict(l=0, r=0, t=30, b=0))
-            st.plotly_chart(fig_cov, use_container_width=True)
+            st.plotly_chart(fig_cov, width="stretch")
 
             st.subheader("MSA Slicing")
             st.write(f"MSA Length: {align_len}")
@@ -268,7 +268,7 @@ def sequence_clustering_section(sequences, seq_type):
                 # Fixed aspect ratio and size
                 fig_pca.update_yaxes(scaleanchor="x", scaleratio=1)
                 fig_pca.update_layout(width=700, height=700)
-                st.plotly_chart(fig_pca, use_container_width=False)
+                st.plotly_chart(fig_pca, width="content")
             else:
                 st.info("Need at least 3 sequences for PCA.")
 
@@ -284,7 +284,7 @@ def sequence_clustering_section(sequences, seq_type):
                 })
 
             df_clusters = pd.DataFrame(cluster_data)
-            st.dataframe(df_clusters, use_container_width=True)
+            st.dataframe(df_clusters, width="stretch")
             st.download_button(
                 "📥 Download Clusters (CSV)",
                 df_clusters.to_csv(index=False),
@@ -337,7 +337,7 @@ def sequence_clustering_section(sequences, seq_type):
                 yaxis_title="Count",
                 bargap=0.1
             )
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width="stretch")
 
         with tab3:
             st.markdown("### Similarity Matrix")
@@ -354,7 +354,7 @@ def sequence_clustering_section(sequences, seq_type):
                 yaxis_showticklabels=False,
                 height=600
             )
-            st.plotly_chart(fig_hm, use_container_width=True)
+            st.plotly_chart(fig_hm, width="stretch")
 
 def calculate_similarity_matrix_from_msa(alignment, sequences):
     """

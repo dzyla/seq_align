@@ -114,7 +114,7 @@ def plot_msa_image_plotly(msa_image: np.ndarray, msa_letters: np.ndarray):
         height=600
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     try:
         img_bytes = fig.to_image(format="png")
@@ -202,5 +202,5 @@ def _plot_msa_image_matplotlib_subset(msa_image_subset: np.ndarray, msa_letters_
     plt.savefig(buf, format="png", dpi=300, bbox_inches='tight')
     plt.close(fig)
     buf.seek(0)
-    st.image(buf, caption="MSA Heatmap", use_container_width=True)
+    st.image(buf, caption="MSA Heatmap", width="stretch")
     return buf
