@@ -247,7 +247,9 @@ def test_tree_section_notes_when_figure_is_wider_than_asked(tmp_path):
     assert any("cm wide so labels fit" in c.value for c in at.caption)
 
 
-def dark_tree_page(tmp_path, charts):
+def dark_tree_page(tmp_path, monkeypatch, charts):
+    import modules.ui
+    monkeypatch.setattr(modules.ui, "theme_type", lambda: "dark")  # AppTest runs the script in this process
     script = tmp_path / "dark_tree_page.py"
     script.write_text(textwrap.dedent(f"""
         import sys
@@ -255,8 +257,6 @@ def dark_tree_page(tmp_path, charts):
         from io import StringIO
         import streamlit as st
         from Bio import Phylo
-        import modules.ui
-        modules.ui.theme_type = lambda: "dark"
         st.session_state["appearance_charts"] = {charts!r}
         from modules.phylogeny import phylogenetic_tree_section
         phylogenetic_tree_section(Phylo.read(StringIO({GLOBIN_NEWICK!r}), "newick"), "t")
@@ -269,5 +269,5 @@ def dark_tree_page(tmp_path, charts):
 
 
 @pytest.mark.parametrize("charts,cream", [("Match theme", True), ("Publication white", False)])
-def test_explore_view_is_dark_only_when_charts_match_night_theme(tmp_path, charts, cream):
-    assert ("#ece8df" in dark_tree_page(tmp_path, charts)) is cream
+def test_explore_view_is_dark_only_when_charts_match_night_theme(tmp_path, monkeypatch, charts, cream):
+    assert ("#ece8df" in dark_tree_page(tmp_path, monkeypatch, charts)) is cream
