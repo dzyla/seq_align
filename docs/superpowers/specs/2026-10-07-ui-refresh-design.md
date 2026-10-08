@@ -62,6 +62,15 @@
 
 ## Part 2: Publication trees
 
+> **Updated during planning (2026-10-08)** after a tested prototype. Where this section and the plan
+> (`docs/superpowers/plans/2026-10-08-07-ui-refresh.md`) differ, the plan's code is authoritative.
+> - `TreeGeometry` stores `edges` (each drawn as an L, an arc plus radial line, or a straight line) instead of separate segments and arcs.
+> - Label placement happens in `tree_render.place` (in inches, with measured text sizes).
+> - Circular labels always sit on an outer ring, with dotted leaders where tips fall short.
+> - Unrooted labels are horizontal and placed greedily outward from their tips, trying ±60° in steps. Branches and leaders act as obstacles. Labels never overlap; this replaced the repulsion pass, which could oscillate.
+> - Circular and unrooted clade names go in a legend; rectangular clade names sit beside the clade bar.
+> - The Figure view shows a 150-dpi preview of the exact figure. The 600-dpi PNG is generated on click (callable download data), because it takes 2–6 s.
+
 ### Architecture
 
 Shared geometry with two renderers:
