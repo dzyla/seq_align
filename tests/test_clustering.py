@@ -80,6 +80,14 @@ class TestClustering(unittest.TestCase):
         self.assertEqual(coords.shape, (3, 2))
         self.assertLess(np.linalg.norm(coords[0] - coords[1]), np.linalg.norm(coords[0] - coords[2]))
 
+    def test_similarity_heatmap_axes_are_categorical(self):
+        from modules.clustering import similarity_heatmap_figure
+        ids = ["1", "2", "10"]
+        fig = similarity_heatmap_figure(np.eye(3), ids, [2, 0, 1])
+        self.assertEqual(fig.layout.xaxis.type, "category")
+        self.assertEqual(fig.layout.yaxis.type, "category")
+        self.assertEqual(list(fig.data[0].y), ["10", "1", "2"])
+
     def test_cluster_order(self):
         from modules.clustering import cluster_order
         ids = ["a", "b", "c", "d"]

@@ -274,15 +274,7 @@ def sequence_clustering_section(sequences, seq_type):
         with tab3:
             st.markdown("### Similarity Matrix")
             order = cluster_order(ids, clusters, leaf_order)
-            ordered_ids = [ids[i] for i in order]
-            fig_hm = go.Figure(data=go.Heatmap(
-                z=matrix[np.ix_(order, order)], x=ordered_ids, y=ordered_ids, colorscale="Viridis",
-                zmin=0, zmax=1, hovertemplate="%{y} vs %{x}: %{z:.3f}<extra></extra>"))
-            show_labels = len(ids) <= 60
-            fig_hm.update_layout(title="Pairwise Similarity Matrix (ordered by cluster)", height=700,
-                                 xaxis_showticklabels=show_labels, yaxis_showticklabels=show_labels,
-                                 yaxis_autorange="reversed")
-            st.plotly_chart(fig_hm, width="stretch")
+            st.plotly_chart(similarity_heatmap_figure(matrix, ids, order), width="stretch")
             if clustering_method == HIERARCHICAL and 2 < len(ids) <= 200:
                 condensed = squareform(np.clip(1 - matrix, 0, None), checks=False)
                 fig_dg = ff.create_dendrogram(np.arange(len(ids)).reshape(-1, 1), labels=ids,
@@ -290,14 +282,6 @@ def sequence_clustering_section(sequences, seq_type):
                                               linkagefun=lambda d: linkage(d, method="average"))
                 fig_dg.update_layout(title="Average-linkage dendrogram (distance = 1 − similarity)", height=450)
                 st.plotly_chart(fig_dg, width="stretch")
-
-def cluster_order(ids, clusters, leaf_order=None):
-    """Row order for heatmaps: dendrogram leaf order if given, else grouped by cluster."""
-    if leaf_order is not None:
-        return list(leaf_order)
-    index = {seq_id: i for i, seq_id in enumerate(ids)}
-    return [index[seq_id] for cluster in clusters for seq_id in cluster]
-
 
 def msa_identity_matrix(aligned):
     """Pairwise identity from aligned strings: identical residues / columns where either has a residue."""
@@ -421,6 +405,29 @@ def find_clusters(similarity_matrix, ids, threshold):
                     queue.append(j)
         clusters.append(component)
     return clusters
+
+
+def cluster_order(ids, clusters, leaf_order=None):
+    """Row order for heatmaps: dendrogram leaf order if given, else grouped by cluster."""
+    if leaf_order is not None:
+        return list(leaf_order)
+    index = {seq_id: i for i, seq_id in enumerate(ids)}
+    return [index[seq_id] for cluster in clusters for seq_id in cluster]
+
+
+def similarity_heatmap_figure(matrix, ids, order):
+    """Similarity heatmap with rows and columns in `order`; both axes forced categorical so numeric IDs keep it."""
+    ordered_ids = [ids[i] for i in order]
+    show_labels = len(ids) <= 60
+    fig = go.Figure(data=go.Heatmap(
+        z=np.asarray(matrix)[np.ix_(order, order)], x=ordered_ids, y=ordered_ids, colorscale="Viridis",
+        zmin=0, zmax=1, hovertemplate="%{y} vs %{x}: %{z:.3f}<extra></extra>"))
+    fig.update_layout(title="Pairwise Similarity Matrix (ordered by cluster)", height=700,
+                      xaxis_type="category", yaxis_type="category",
+                      xaxis_showticklabels=show_labels, yaxis_showticklabels=show_labels,
+                      yaxis_autorange="reversed")
+    return fig
+
 
 def calculate_sequence_coverage(aligned):
     """Number of non-gap residues per alignment column."""
