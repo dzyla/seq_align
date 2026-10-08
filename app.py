@@ -36,6 +36,15 @@ def _load_once(key, loader, state=None):
     return state["input_cache"]
 
 
+def _clear_structures(state=None):
+    """Empty the structure store and drop the input cache that produced it (only if it was non-empty)."""
+    state = st.session_state if state is None else state
+    if state.get("structures"):
+        state["structures"] = {}
+        state["input_key"] = None
+        state["input_cache"] = None
+
+
 def _load_structures(files, input_format, all_models):
     records, errors, store = [], [], {}
     for f in files:
@@ -60,7 +69,7 @@ def handle_input(input_format):
     """Return (sequences, tree) for the current sidebar input. Parsing reruns only when content changes."""
     result, error = None, None
     if input_format not in STRUCTURE_FORMATS:
-        st.session_state.structures = {}
+        _clear_structures()
 
     if input_format == "Text (FASTA)":
         seq_text = st.sidebar.text_area(
@@ -82,7 +91,7 @@ def handle_input(input_format):
             key = (input_format, all_models, tuple((f.name, _digest(f.getvalue())) for f in files))
             result, error = _load_once(key, lambda: _load_structures(files, input_format, all_models))
         else:
-            st.session_state.structures = {}
+            _clear_structures()
     elif input_format == "Newick":
         uploaded = st.sidebar.file_uploader(
             "Upload Newick Tree File", type=["nwk", "newick", "tree"], key="uploader_newick",

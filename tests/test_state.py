@@ -50,3 +50,18 @@ def test_same_name_new_content_reparses():
     app._load_once(key_v1, loader, state)
     app._load_once(key_v2, loader, state)
     assert len(calls) == 2
+
+
+def test_clear_structures_invalidates_input_cache():
+    import app
+    state = {"structures": {"a.pdb": object()}, "input_key": ("PDB",), "input_cache": ("x", None)}
+    app._clear_structures(state)
+    assert state == {"structures": {}, "input_key": None, "input_cache": None}
+
+
+def test_clear_structures_noop_when_already_empty():
+    import app
+    state = {"structures": {}, "input_key": ("text", "h"), "input_cache": ("x", None)}
+    app._clear_structures(state)
+    assert state["input_key"] == ("text", "h")
+    assert state["input_cache"] == ("x", None)
