@@ -40,5 +40,45 @@ class TestClustering(unittest.TestCase):
         # seq1 vs seq4 should be 0.8 (4/5 matches)
         self.assertAlmostEqual(matrix[0, 3], 0.8)
 
+    def test_msa_identity_ignores_double_gap_columns(self):
+        from modules.clustering import msa_identity_matrix
+        m = msa_identity_matrix(["MKV---LAA", "MKV---LAA", "MKVGGGLAA", "MKA------"])
+        self.assertEqual(m[0, 1], 1.0)
+        self.assertAlmostEqual(m[0, 2], 6 / 9)
+        self.assertAlmostEqual(m[0, 3], 2 / 6)
+
+    def test_local_identity_normalized_by_shorter_sequence(self):
+        a = SeqRecord(Seq("W" * 8 + "H" * 32), id="a")
+        b = SeqRecord(Seq("W" * 8 + "K" * 33), id="b")
+        matrix, _ = calculate_similarity_matrix_pairwise([a, b], "Protein", "Local")
+        self.assertAlmostEqual(matrix[0, 1], 8 / 40)
+
+    def test_pairwise_matrix_lowercase(self):
+        a = SeqRecord(Seq("mkvlaa"), id="a")
+        b = SeqRecord(Seq("MKVLAA"), id="b")
+        matrix, _ = calculate_similarity_matrix_pairwise([a, b], "Protein", "Global")
+        self.assertEqual(matrix[0, 1], 1.0)
+
+    def test_hierarchical_clusters(self):
+        from modules.clustering import hierarchical_clusters
+        sim = np.array([[1, .95, .2], [.95, 1, .2], [.2, .2, 1]])
+        clusters, order = hierarchical_clusters(sim, ["a", "b", "c"], 0.9)
+        self.assertEqual(sorted(map(sorted, clusters)), [["a", "b"], ["c"]])
+        self.assertEqual(sorted(order), [0, 1, 2])
+
+    def test_suggest_threshold_separates_modes(self):
+        from modules.clustering import suggest_threshold
+        rng = np.random.default_rng(0)
+        values = np.clip(np.r_[rng.normal(0.3, 0.05, 200), rng.normal(0.9, 0.03, 50)], 0, 1)
+        t = suggest_threshold(values)
+        self.assertTrue(0.35 < t < 0.85, t)
+        self.assertEqual(suggest_threshold(np.array([])), 0.8)
+
+    def test_pcoa_preserves_neighbourhoods(self):
+        from modules.clustering import perform_pcoa
+        coords = perform_pcoa(np.array([[1, .9, .1], [.9, 1, .1], [.1, .1, 1]]))
+        self.assertEqual(coords.shape, (3, 2))
+        self.assertLess(np.linalg.norm(coords[0] - coords[1]), np.linalg.norm(coords[0] - coords[2]))
+
 if __name__ == '__main__':
     unittest.main()

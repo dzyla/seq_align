@@ -7,12 +7,20 @@ from Bio import AlignIO
 from io import StringIO
 import zipfile
 import io
-from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from modules.msa import MSAError, perform_msa
-from modules.pairwise import get_aligner, calculate_alignment_score
+from modules.pairwise import get_aligner
 from modules.viz import msa_to_image, plot_msa_image
+from collections import deque
+from scipy.cluster.hierarchy import fcluster, leaves_list, linkage
+from scipy.spatial.distance import squareform
+from modules.seqtools import clean_sequence
+
+HIERARCHICAL = "Hierarchical (average linkage)"
+CONNECTED = "Connected components (single linkage)"
+KMEANS = "K-Means on PCoA coordinates"
+CLUSTERING_METHODS = (HIERARCHICAL, CONNECTED, KMEANS)
 
 def sequence_clustering_section(sequences, seq_type):
     """
@@ -123,7 +131,10 @@ def sequence_clustering_section(sequences, seq_type):
     else: # Accurate Pairwise
         if st.button("Calculate Pairwise Similarity"):
             with st.spinner("Calculating pairwise similarity matrix (this may take time)..."):
-                matrix, sorted_ids = calculate_similarity_matrix_pairwise(sequences, seq_type, align_mode)
+                progress_bar = st.progress(0.0)
+                matrix, sorted_ids = calculate_similarity_matrix_pairwise(
+                    sequences, seq_type, align_mode, progress_callback=progress_bar.progress)
+                progress_bar.empty()
                 st.session_state.clustering_matrix = matrix
                 st.session_state.clustering_ids = sorted_ids
 
@@ -135,104 +146,61 @@ def sequence_clustering_section(sequences, seq_type):
         st.divider()
         st.subheader("📊 Analysis")
 
-        # Choose Clustering Method
         clustering_method = st.radio(
             "Clustering Method",
-            ("Similarity Threshold", "PCA Coordinates (K-Means)"),
-            horizontal=True
+            CLUSTERING_METHODS,
+            horizontal=True,
+            help="Average linkage avoids the chaining effect of single linkage. "
+                 "K-Means runs on classical MDS (PCoA) coordinates of the distance matrix."
         )
 
         clusters = []
         threshold = None
+        similarities = matrix[np.triu_indices_from(matrix, k=1)]
 
-        if clustering_method == "Similarity Threshold":
-            # Auto-detect threshold from histogram (last bin)
-            upper_tri_indices = np.triu_indices_from(matrix, k=1)
-            similarities = matrix[upper_tri_indices]
-            suggested_threshold = 0.8
-
-            if len(similarities) > 0:
-                # Use 50 bins from 0 to 1
-                hist, bin_edges = np.histogram(similarities, bins=50, range=(0, 1))
-                # Find the last bin with counts
-                for i in range(len(hist)-1, -1, -1):
-                    if hist[i] > 0:
-                        suggested_threshold = float(bin_edges[i])
-                        break
-
-            # Threshold Slider with fine control
+        if clustering_method in (HIERARCHICAL, CONNECTED):
             threshold = st.slider(
                 "Similarity Threshold for Clustering",
-                0.0, 1.0, suggested_threshold, 0.01,
+                0.0, 1.0, suggest_threshold(similarities), 0.01,
                 format="%.2f",
-                help="Sequences with similarity >= threshold will be grouped together. Default is auto-detected from histogram."
+                help="Sequences are grouped when their similarity is at or above the threshold. "
+                     "The default comes from Otsu's method on the similarity histogram."
             )
-
-            # Calculate clusters
-            clusters = find_clusters(matrix, ids, threshold)
-
-        else:
-            # PCA Clustering
-            if len(ids) < 3:
-                st.warning("Need at least 3 sequences for PCA clustering.")
-                # Fallback to single cluster
-                clusters = [ids]
+            if clustering_method == HIERARCHICAL:
+                clusters, _ = hierarchical_clusters(matrix, ids, threshold)
             else:
-                pca_coords = perform_pca(matrix)
-
-                col_k1, col_k2 = st.columns([3, 2])
-
-                # Session state for K
-                if 'pca_k_val' not in st.session_state:
-                    st.session_state.pca_k_val = min(3, len(ids)-1)
-
-                # Ensure value is valid
-                if st.session_state.pca_k_val >= len(ids):
-                    st.session_state.pca_k_val = max(2, len(ids) - 1)
-                if st.session_state.pca_k_val < 2:
-                    st.session_state.pca_k_val = 2
-
-                with col_k1:
-                    n_clusters = st.number_input(
-                        "Number of Clusters (k)",
-                        min_value=2,
-                        max_value=max(2, len(ids)-1),
-                        key='pca_k_val'
-                    )
-
-                with col_k2:
-                    st.write("") # Spacer
-                    st.write("")
-                    if st.button("Guess Best Number"):
-                        # Guess best K using Silhouette Score
-                        best_k = 2
-                        best_score = -1
-                        limit = min(len(ids), 10)
-
-                        for k in range(2, limit):
-                            km = KMeans(n_clusters=k, random_state=42, n_init='auto')
-                            labels = km.fit_predict(pca_coords)
-                            if len(set(labels)) > 1:
-                                score = silhouette_score(pca_coords, labels)
-                                if score > best_score:
-                                    best_score = score
-                                    best_k = k
-
-                        st.session_state.pca_k_val = best_k
-                        st.rerun()
-
-                # Perform K-Means
-                km = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-                labels = km.fit_predict(pca_coords)
-
-                # Group IDs by label
-                cluster_map = {}
-                for idx, label in enumerate(labels):
-                    if label not in cluster_map:
-                        cluster_map[label] = []
-                    cluster_map[label].append(ids[idx])
-
-                clusters = list(cluster_map.values())
+                clusters = find_clusters(matrix, ids, threshold)
+        elif len(ids) < 3:
+            st.warning("Need at least 3 sequences for K-Means clustering.")
+            clusters = [list(ids)]
+        else:
+            coords = perform_pcoa(matrix)
+            col_k1, col_k2 = st.columns([3, 2])
+            if 'pca_k_val' not in st.session_state:
+                st.session_state.pca_k_val = min(3, len(ids) - 1)
+            st.session_state.pca_k_val = min(max(2, st.session_state.pca_k_val), max(2, len(ids) - 1))
+            with col_k1:
+                n_clusters = st.number_input(
+                    "Number of Clusters (k)", min_value=2, max_value=max(2, len(ids) - 1), key='pca_k_val'
+                )
+            with col_k2:
+                st.write("")
+                st.write("")
+                if st.button("Guess Best Number"):
+                    best_k, best_score = 2, -1
+                    for k in range(2, min(len(ids), 10)):
+                        labels = KMeans(n_clusters=k, random_state=42, n_init='auto').fit_predict(coords)
+                        if len(set(labels)) > 1:
+                            score = silhouette_score(coords, labels)
+                            if score > best_score:
+                                best_k, best_score = k, score
+                    st.session_state.pca_k_val = best_k
+                    st.rerun()
+            labels = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto').fit_predict(coords)
+            cluster_map = {}
+            for idx, label in enumerate(labels):
+                cluster_map.setdefault(label, []).append(ids[idx])
+            clusters = list(cluster_map.values())
 
         # Sort clusters by size (descending)
         clusters.sort(key=len, reverse=True)
@@ -244,30 +212,20 @@ def sequence_clustering_section(sequences, seq_type):
                 id_to_cluster[seq_id] = f"Cluster {idx+1}"
 
         # Tabs for different views
-        tab1, tab2, tab3 = st.tabs(["PCA & Clusters", "Similarity Histogram", "Matrix Heatmap"])
+        tab1, tab2, tab3 = st.tabs(["PCoA & Clusters", "Similarity Histogram", "Matrix Heatmap"])
 
         with tab1:
-            st.markdown("### PCA of Sequences")
+            st.markdown("### PCoA of Sequences")
             if len(ids) >= 3:
-                pca_coords = perform_pca(matrix)
-
-                # Create DataFrame for plotting
-                df_pca = pd.DataFrame(pca_coords, columns=['PC1', 'PC2'])
+                df_pca = pd.DataFrame(perform_pcoa(matrix), columns=['PCoA 1', 'PCoA 2'])
                 df_pca['Sequence ID'] = ids
                 df_pca['Cluster'] = [id_to_cluster.get(x, "Unknown") for x in ids]
-
-                title_text = f"PCA of Sequences (Method: {clustering_method})"
-                if clustering_method == "Similarity Threshold" and threshold is not None:
-                     title_text = f"PCA of Sequences (Clustered at {threshold:.2f})"
-
-                fig_pca = px.scatter(
-                    df_pca, x='PC1', y='PC2',
-                    color='Cluster',
-                    hover_data=['Sequence ID'],
-                    title=title_text
-                )
+                title_text = f"PCoA of Sequences ({clustering_method})"
+                if threshold is not None:
+                    title_text += f", threshold {threshold:.2f}"
+                fig_pca = px.scatter(df_pca, x='PCoA 1', y='PCoA 2', color='Cluster',
+                                     hover_data=['Sequence ID'], title=title_text)
                 fig_pca.update_traces(marker=dict(size=12))
-                # Fixed aspect ratio and size
                 fig_pca.update_yaxes(scaleanchor="x", scaleratio=1)
                 fig_pca.update_layout(width=700, height=700)
                 st.plotly_chart(fig_pca, width="content")
@@ -331,7 +289,7 @@ def sequence_clustering_section(sequences, seq_type):
             similarities = matrix[upper_tri_indices]
 
             fig_hist = go.Figure(data=[go.Histogram(x=similarities, nbinsx=50)])
-            if clustering_method == "Similarity Threshold" and threshold is not None:
+            if threshold is not None:
                 fig_hist.add_vline(x=threshold, line_dash="dash", line_color="red", annotation_text="Threshold")
             fig_hist.update_layout(
                 title="Distribution of Pairwise Similarities",
@@ -358,115 +316,134 @@ def sequence_clustering_section(sequences, seq_type):
             )
             st.plotly_chart(fig_hm, width="stretch")
 
+def msa_identity_matrix(aligned):
+    """Pairwise identity from aligned strings: identical residues / columns where either has a residue."""
+    n = len(aligned)
+    matrix = np.eye(n)
+    if n == 0:
+        return matrix
+    arr = np.frombuffer("".join(s.upper() for s in aligned).encode(), dtype=np.uint8).reshape(n, -1)
+    residue = arr != ord('-')
+    for i in range(n - 1):
+        same = (arr[i] == arr[i + 1:]) & residue[i]
+        cols = residue[i] | residue[i + 1:]
+        counts = cols.sum(axis=1)
+        values = np.divide(same.sum(axis=1), counts, out=np.zeros(len(counts)), where=counts > 0)
+        matrix[i, i + 1:] = values
+        matrix[i + 1:, i] = values
+    return matrix
+
+
 def calculate_similarity_matrix_from_msa(alignment, sequences):
-    """
-    Calculate N*N similarity matrix from a sliced MSA.
-    """
-    # Create a map of id -> sequence string from alignment
+    """N×N identity matrix from a (sliced) MSA, in input-sequence order."""
     aln_dict = {rec.id: str(rec.seq) for rec in alignment}
+    ids = [seq.id for seq in sequences if seq.id in aln_dict]
+    return msa_identity_matrix([aln_dict[i] for i in ids]), ids
 
-    # Use the IDs from input sequences to maintain order
+
+def pairwise_identity(aligned1, aligned2, mode, len1, len2):
+    """Identity of a pairwise alignment.
+
+    Global/overlap: matches / alignment columns. Local: matches / length of the shorter
+    sequence, so a short shared motif does not score as identical sequences.
+    """
+    matches = sum(1 for a, b in zip(aligned1, aligned2) if a == b and a != '-')
+    if mode == "local":
+        denominator = min(len1, len2)
+    else:
+        denominator = sum(1 for a, b in zip(aligned1, aligned2) if a != '-' or b != '-')
+    return matches / denominator if denominator else 0.0
+
+
+def calculate_similarity_matrix_pairwise(sequences, seq_type, align_mode, progress_callback=None):
+    """N×N identity matrix from all-against-all pairwise alignments."""
+    mode = align_mode.lower()
     ids = [seq.id for seq in sequences]
-    # Ensure we only use IDs that are in the alignment (should be all)
-    ids = [i for i in ids if i in aln_dict]
-
-    aligned_seqs = [aln_dict[seq_id] for seq_id in ids]
-    n = len(ids)
-    matrix = np.zeros((n, n))
-
-    for i in range(n):
-        matrix[i, i] = 1.0
-        for j in range(i + 1, n):
-            s1 = aligned_seqs[i]
-            s2 = aligned_seqs[j]
-
-            # Simple identity: matches / length of slice
-            # If slice length is 0 (shouldn't happen with min_value=1), score is 0
-            if len(s1) == 0:
-                score = 0
-            else:
-                matches = sum(1 for a, b in zip(s1, s2) if a == b and a != '-')
-                score = matches / len(s1)
-
-            matrix[i, j] = matrix[j, i] = score
-
-    return matrix, ids
-
-def calculate_similarity_matrix_pairwise(sequences, seq_type, align_mode):
-    """
-    Calculate N*N similarity matrix using pairwise alignment.
-    """
+    cleaned = [clean_sequence(seq.seq, seq_type) for seq in sequences]
     n = len(sequences)
-    ids = [seq.id for seq in sequences]
-    matrix = np.zeros((n, n))
-
-    aligner = get_aligner(seq_type, align_mode.lower(), -10.0, -0.5)
-
-    progress_bar = st.progress(0)
-    total_pairs = (n * (n - 1)) // 2
-    current_pair = 0
-
+    matrix = np.eye(n)
+    aligner = get_aligner(seq_type, mode)
+    total_pairs = n * (n - 1) // 2
+    done = 0
     for i in range(n):
-        matrix[i, i] = 1.0
-        # Optimization: Calculate only upper triangle (i < j) and mirror results
         for j in range(i + 1, n):
-            alignments = aligner.align(sequences[i], sequences[j])
-            try:
-                aln = next(alignments)
-                s1_aln = str(aln[0])
-                # Count matches
-                matches = sum(1 for a, b in zip(str(aln[0]), str(aln[1])) if a == b and a != '-')
-                # Normalize by alignment length (including gaps)
-                # or length of longer sequence?
-                # Usually matches / alignment_length is good for identity
-                sim = matches / len(s1_aln) if len(s1_aln) > 0 else 0
-            except StopIteration:
-                sim = 0
-
+            sim = 0.0
+            if cleaned[i] and cleaned[j]:
+                try:
+                    aln = next(iter(aligner.align(cleaned[i], cleaned[j])))
+                    sim = pairwise_identity(str(aln[0]), str(aln[1]), mode, len(cleaned[i]), len(cleaned[j]))
+                except StopIteration:
+                    sim = 0.0
             matrix[i, j] = matrix[j, i] = sim
-
-            current_pair += 1
-            if total_pairs > 0 and current_pair % 10 == 0:
-                progress_bar.progress(current_pair / total_pairs)
-
-    progress_bar.empty()
+            done += 1
+            if progress_callback and total_pairs and done % 10 == 0:
+                progress_callback(done / total_pairs)
     return matrix, ids
 
-def perform_pca(matrix):
+
+def suggest_threshold(similarities, bins=50):
+    """Otsu threshold on the similarity histogram; 0.8 when there is nothing to split."""
+    values = np.asarray(similarities, dtype=float)
+    if values.size < 2 or np.ptp(values) == 0:
+        return float(values.mean()) if values.size else 0.8
+    hist, edges = np.histogram(values, bins=bins, range=(0, 1))
+    centers = (edges[:-1] + edges[1:]) / 2
+    w0 = np.cumsum(hist)
+    w1 = w0[-1] - w0
+    m0 = np.cumsum(hist * centers)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        between = w0 * w1 * (m0 / w0 - (m0[-1] - m0) / w1) ** 2
+    return float(round(edges[int(np.argmax(np.nan_to_num(between))) + 1], 2))
+
+
+def hierarchical_clusters(similarity, ids, threshold, method="average"):
+    """Cut an average-linkage tree at distance 1 - threshold.
+
+    Returns (clusters as lists of IDs, leaf order of the dendrogram as row indices).
     """
-    Perform PCA on the similarity matrix.
-    Treats the similarity matrix row vectors as features for each sequence.
-    """
-    pca = PCA(n_components=2)
-    coords = pca.fit_transform(matrix)
-    return coords
+    if len(ids) < 2:
+        return [list(ids)], list(range(len(ids)))
+    distance = np.clip(1.0 - np.asarray(similarity, dtype=float), 0, None)
+    distance = (distance + distance.T) / 2
+    np.fill_diagonal(distance, 0)
+    tree = linkage(squareform(distance, checks=False), method=method)
+    labels = fcluster(tree, t=1.0 - threshold, criterion="distance")
+    groups = {}
+    for seq_id, label in zip(ids, labels):
+        groups.setdefault(label, []).append(seq_id)
+    return list(groups.values()), leaves_list(tree).tolist()
+
+
+def perform_pcoa(matrix, n_components=2):
+    """Classical multidimensional scaling (PCoA) of the distance 1 - similarity."""
+    distance = 1.0 - np.asarray(matrix, dtype=float)
+    n = distance.shape[0]
+    centering = np.eye(n) - np.ones((n, n)) / n
+    b = -0.5 * centering @ (distance ** 2) @ centering
+    eigenvalues, eigenvectors = np.linalg.eigh(b)
+    order = np.argsort(eigenvalues)[::-1][:n_components]
+    return eigenvectors[:, order] * np.sqrt(np.clip(eigenvalues[order], 0, None))
+
 
 def find_clusters(similarity_matrix, ids, threshold):
-    """
-    Find connected components in the similarity graph.
-    """
+    """Connected components of the graph with edges where similarity >= threshold (single linkage)."""
     n = len(ids)
     visited = [False] * n
     clusters = []
-
     for i in range(n):
-        if not visited[i]:
-            # Start BFS/DFS
-            component = []
-            queue = [i]
-            visited[i] = True
-
-            while queue:
-                curr = queue.pop(0)
-                component.append(ids[curr])
-
-                for j in range(n):
-                    if not visited[j] and similarity_matrix[curr, j] >= threshold:
-                        visited[j] = True
-                        queue.append(j)
-
-            clusters.append(component)
-
+        if visited[i]:
+            continue
+        component = []
+        queue = deque([i])
+        visited[i] = True
+        while queue:
+            curr = queue.popleft()
+            component.append(ids[curr])
+            for j in range(n):
+                if not visited[j] and similarity_matrix[curr, j] >= threshold:
+                    visited[j] = True
+                    queue.append(j)
+        clusters.append(component)
     return clusters
 
 def calculate_sequence_coverage(alignment):
