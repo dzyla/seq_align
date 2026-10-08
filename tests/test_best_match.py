@@ -123,5 +123,25 @@ class TestBestMatchFinder(unittest.TestCase):
         best_match_norm, results_norm = find_best_match(sequences, "Ref", aligner, "DNA", sort_key="Normalized Score")
         self.assertEqual(best_match_norm.id, "S1")
 
+    def test_relative_score_identity_and_coverage(self):
+        from modules.best_match import identity_and_coverage
+        aligner = get_aligner("Protein")
+        ref = SeqRecord(Seq("MVLSPADKTN"), id="Ref")
+        s1 = SeqRecord(Seq("MVLSPADKTN"), id="S1")
+        s2 = SeqRecord(Seq("MVLSPADK"), id="S2")
+        _, results = find_best_match([ref, s1, s2], "Ref", aligner, "Protein", sort_key="Relative Score")
+        by_id = {r["Sequence ID"]: r for r in results}
+        self.assertAlmostEqual(by_id["S1"]["Relative Score"], 1.0)
+        self.assertEqual(by_id["S2"]["Identity (%)"], 100.0)
+        self.assertEqual(by_id["S2"]["Coverage (%)"], 80.0)
+        self.assertEqual(identity_and_coverage("MKV-", "MRVL", 3), (2 / 3 * 100, 100.0))
+
+    def test_sort_results_reassigns_rank(self):
+        from modules.best_match import sort_results
+        rows = [{"Score": 1, "Identity (%)": 90}, {"Score": 5, "Identity (%)": 10}]
+        sort_results(rows, "Identity (%)")
+        self.assertEqual([r["Rank"] for r in rows], [1, 2])
+        self.assertEqual(rows[0]["Identity (%)"], 90)
+
 if __name__ == '__main__':
     unittest.main()
