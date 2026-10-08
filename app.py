@@ -135,21 +135,22 @@ def handle_input(input_format):
 
 
 def main():
-    st.set_page_config(page_title="Advanced Sequence Alignment Ability", layout="wide")
+    st.set_page_config(page_title="Advanced Sequence Alignment Tool", page_icon="🔬", layout="wide")
     init_session_state()
 
-    st.title("🔬 Advanced Sequence Alignment and Format Conversion Ability")
-    st.write("""
-    ### Welcome to the Advanced Sequence Alignment Tool!
-    This application allows you to perform **pairwise** and **multiple sequence alignments (MSA)** on **DNA** or **Protein** sequences.
-    You can choose between **Global**, **Local**, and **Overlap** alignments. Additionally, you can convert sequence files between various formats.
-    For MSA, point mutations relative to a reference sequence are reported.
-    **How to Use:**
-    1. **Upload your sequences** either by uploading a file or pasting them directly.
-    2. **Select your preferences** from the sidebar.
-    3. **Run** the desired analysis.
-    4. **Download** your results!
-    """)
+    st.title("🔬 Advanced Sequence Alignment Tool")
+    with st.expander("ℹ️ How to use this tool"):
+        st.markdown("""
+Align, compare and annotate **DNA** or **protein** sequences and structures.
+
+1. **Load data** in the sidebar: paste FASTA, upload a sequence or structure file, or load an example.
+2. **Check the sequence type.** It is detected automatically; change it if needed.
+3. **Pick an analysis** and adjust its settings.
+4. **Run** it and **download** the results.
+
+Pairwise alignments support Global, Local and Overlap (free end gaps) modes. MSA uses FAMSA.
+Mutation positions are always reported in reference-sequence coordinates.
+""")
 
     st.sidebar.header("📥 Upload and Settings")
     input_format = st.sidebar.selectbox("Select Input Format", INPUT_FORMATS, key="input_format",

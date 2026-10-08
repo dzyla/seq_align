@@ -78,3 +78,10 @@ def test_pairwise_shows_stale_notice_after_param_change():
     at = run_pairwise(load(FASTA_A))
     at.selectbox(key="pairwise_mode").select("Local").run()
     assert any("Settings changed" in i.value for i in at.info)
+
+
+def test_title_has_no_ability_wording():
+    at = AppTest.from_file("app.py", default_timeout=60)
+    at.run()
+    assert at.title[0].value == "🔬 Advanced Sequence Alignment Tool"
+    assert all("Abilit" not in m.value for m in at.markdown)
