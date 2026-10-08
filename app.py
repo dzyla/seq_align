@@ -9,7 +9,7 @@ from modules.best_match import best_match_finder_section
 from modules.clustering import sequence_clustering_section
 from modules.conversion import format_conversion_section
 from modules.fetch import FETCH_SOURCES, FetchError, fetch_any, parse_id_list
-from modules.dna import dna_translation_section
+from modules.dna import dna_tools_section, dna_translation_section
 from modules.msa import msa_section
 from modules.navigation import available_analyses
 from modules.pairwise import pairwise_alignment_section
@@ -223,7 +223,7 @@ Mutation positions are always reported in reference-sequence coordinates.
     structures = st.session_state.get("structures", {})
     show_dataset_overview(sequences, seq_type)
 
-    options = available_analyses(bool(sequences), bool(structures), seq_type)
+    options = available_analyses(bool(sequences), bool(structures), seq_type, len(sequences))
     if st.session_state.get("analysis_select") not in options:
         st.session_state.analysis_select = options[0]
     alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options, key="analysis_select")
@@ -251,6 +251,8 @@ Mutation positions are always reported in reference-sequence coordinates.
         sequence_properties_section(sequences)
     elif alignment_mode == "Translate DNA":
         dna_translation_section(sequences)
+    elif alignment_mode == "DNA Tools":
+        dna_tools_section(sequences)
     elif alignment_mode == "Convert Formats":
         format_conversion_section(sequences, input_format, seq_type)
     elif alignment_mode == "Structure Viewer":
