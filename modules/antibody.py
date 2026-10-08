@@ -29,27 +29,44 @@ REGION_COLORS = {"FR1": "#e0e0e0", "CDR1": "#ffcccc", "FR2": "#e0e0e0", "CDR2": 
                  "FR3": "#e0e0e0", "CDR3": "#ccccff", "FR4": "#e0e0e0"}
 
 
-def extract_regions(numbering, scheme, chain_type):
-    """Split an ANARCI numbering into framework and CDR sequences for supported schemes."""
+def _region_bounds(scheme, chain_type):
     definitions = REGION_DEFINITIONS.get(scheme.lower())
     if not definitions:
-        return {}
-    if scheme.lower() == "imgt":
-        bounds = definitions["H"]
-    elif chain_type == "H":
-        bounds = definitions["H"]
-    elif chain_type in ("K", "L"):
-        bounds = definitions["L"]
-    else:
-        return {}
-    regions = {name: [] for name in REGION_ORDER}
-    for (pos, _ins), aa in numbering:
+        return None
+    if scheme.lower() == "imgt" or chain_type == "H":
+        return definitions["H"]
+    if chain_type in ("K", "L"):
+        return definitions["L"]
+    return None
+
+
+def residue_regions(numbering, scheme, chain_type):
+    """(numbering label, region) for every non-gap residue; region is '' when undefined."""
+    bounds = _region_bounds(scheme, chain_type)
+    out = []
+    for (pos, ins), aa in numbering:
         if aa == '-':
             continue
-        for name, start, end in bounds:
-            if start <= pos <= end:
-                regions[name].append(aa)
-                break
+        region = ""
+        if bounds:
+            region = next((name for name, start, end in bounds if start <= pos <= end), "")
+        out.append((f"{pos}{ins.strip()}", region))
+    return out
+
+
+def public_columns(df):
+    return [c for c in df.columns if not str(c).startswith("_")]
+
+
+def extract_regions(numbering, scheme, chain_type):
+    """Split an ANARCI numbering into framework and CDR sequences for supported schemes."""
+    if _region_bounds(scheme, chain_type) is None:
+        return {}
+    regions = {name: [] for name in REGION_ORDER}
+    for (_label, region), aa in zip(residue_regions(numbering, scheme, chain_type),
+                                    (aa for _, aa in numbering if aa != '-')):
+        if region:
+            regions[region].append(aa)
     return {k: "".join(v) for k, v in regions.items()}
 
 
@@ -58,13 +75,14 @@ def extract_cdr_imgt(numbering):
     return extract_regions(numbering, "imgt", "H")
 
 
-def run_numbering(pairs, scheme, species, threshold):
-    """Number (id, sequence) pairs with ANARCI and return one row per detected domain."""
+def run_numbering(pairs, scheme, species, threshold, assign_germline=True):
+    """Number (id, sequence) pairs with ANARCI; one row per domain, with germline genes."""
     _, numbered, alignment_details, _ = anarci.run_anarci(
         list(pairs),
         scheme=scheme.lower(),
         allowed_species=species or None,
         bit_score_threshold=threshold,
+        assign_germline=assign_germline,
         output=False,
     )
     rows = []
@@ -73,19 +91,32 @@ def run_numbering(pairs, scheme, species, threshold):
             continue
         for j, (numbering, start, end) in enumerate(seq_res):
             details = alignment_details[i][j]
+            chain_type = details.get('chain_type', 'Unknown')
+            germlines = details.get("germlines") or {}
+            v_hit, v_id = (germlines.get("v_gene") or [None, None])
+            j_hit, j_id = (germlines.get("j_gene") or [None, None])
+            labelled = residue_regions(numbering, scheme, chain_type)
             row = {
                 "Sequence ID": pairs[i][0],
                 "Domain Index": j + 1,
-                "Chain Type": details.get('chain_type', 'Unknown'),
+                "Chain Type": chain_type,
                 "Species": details.get('species', 'Unknown'),
+                "Germline Species": v_hit[0] if v_hit else "",
+                "V Gene": v_hit[1] if v_hit else "",
+                "V Identity (%)": round(100 * v_id, 1) if v_id is not None else None,
+                "J Gene": j_hit[1] if j_hit else "",
+                "J Identity (%)": round(100 * j_id, 1) if j_id is not None else None,
                 "E-value": float(details.get('evalue', 0)),
                 "Score": float(details.get('bitscore', 0)),
                 "Start": start,
                 "End": end,
             }
-            row.update(extract_regions(numbering, scheme, row["Chain Type"]))
-            row["Numbering"] = " ".join(f"{pos}{ins.strip()}{aa}" for (pos, ins), aa in numbering if aa != '-')
-            row["Sequence"] = "".join(aa for _, aa in numbering if aa != '-')
+            row.update(extract_regions(numbering, scheme, chain_type))
+            residues = [aa for _, aa in numbering if aa != '-']
+            row["Numbering"] = " ".join(f"{label}{aa}" for (label, _), aa in zip(labelled, residues))
+            row["Sequence"] = "".join(residues)
+            row["_labels"] = [label for label, _ in labelled]
+            row["_regions"] = [region for _, region in labelled]
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -152,14 +183,16 @@ def antibody_prediction_section(sequences):
         st.dataframe(df[[c for c in cols if c in df.columns]])
     else:
         st.caption(f"CDR definitions are not available for the {scheme} scheme; showing numbering only.")
-        st.dataframe(df)
+        st.dataframe(df[public_columns(df)])
 
-    st.download_button("Download CSV", df.to_csv(index=False), "antibody_domains.csv", "text/csv", on_click="ignore")
+    st.download_button("Download CSV", df[public_columns(df)].to_csv(index=False), "antibody_domains.csv",
+                       "text/csv", on_click="ignore")
 
     st.subheader("Detailed Domain View")
     for _, row in df.iterrows():
         with st.expander(f"{row['Sequence ID']} - Domain {row['Domain Index']} ({row['Chain Type']})"):
-            st.json({k: (v if not hasattr(v, "item") else v.item()) for k, v in row.to_dict().items()})
+            st.json({k: (v if not hasattr(v, "item") else v.item()) for k, v in row.to_dict().items()
+                     if not str(k).startswith("_")})
             if has_regions:
                 st.markdown(f"### Regions ({scheme})")
                 st.markdown(_regions_html(row), unsafe_allow_html=True)
