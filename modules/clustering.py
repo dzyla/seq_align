@@ -3,13 +3,12 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from Bio import AlignIO
 from io import StringIO
 import zipfile
 import io
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from modules.msa import MSAError, perform_msa
+from modules.msa import MSAError, aligned_to_msa, cached_run_msa
 from modules.pairwise import get_aligner
 from modules.viz import msa_to_image, plot_msa_image
 from collections import deque
@@ -67,66 +66,42 @@ def sequence_clustering_section(sequences, seq_type):
         if st.button("Run/Update MSA"):
             with st.spinner("Calculating MSA..."):
                 try:
-                    msa_text, _ = perform_msa(sequences, sequences[0].id, seq_type, "fasta")
-                    st.session_state.clustering_msa = msa_text
+                    st.session_state.clustering_msa = cached_run_msa(
+                        tuple((s.id, str(s.seq)) for s in sequences), seq_type)
                 except MSAError as e:
                     st.error(str(e))
 
-        if st.session_state.clustering_msa:
+        aligned = st.session_state.clustering_msa
+        if aligned:
             st.success("MSA calculated.")
-            # Parse MSA to get dimensions
-            alignment = AlignIO.read(StringIO(st.session_state.clustering_msa), "fasta")
-            align_len = alignment.get_alignment_length()
+            aligned_ids = [seq_id for seq_id, _ in aligned]
+            aligned_seqs = [seq for _, seq in aligned]
+            align_len = len(aligned_seqs[0])
 
-            # Show MSA Image
-            msa_image, msa_letters = msa_to_image(st.session_state.clustering_msa, "fasta")
+            msa_image, msa_letters = msa_to_image(
+                "".join(f">{i}\n{s}\n" for i, s in aligned), "fasta")
             if msa_image is not None:
                 with st.expander("View MSA Image", expanded=True):
                     plot_msa_image(msa_image, msa_letters, "Plotly (Interactive)")
 
-            # Sequence Coverage
-            coverage = calculate_sequence_coverage(alignment)
-
-            # Plot Coverage
-            df_cov = pd.DataFrame({
-                "Position": range(1, align_len + 1),
-                "Coverage": coverage
-            })
-
-            fig_cov = px.area(df_cov, x="Position", y="Coverage", title="Sequence Coverage per Position")
+            coverage = calculate_sequence_coverage(aligned_seqs)
+            fig_cov = px.area(pd.DataFrame({"Position": range(1, align_len + 1), "Coverage": coverage}),
+                              x="Position", y="Coverage", title="Sequence Coverage per Position")
             fig_cov.update_layout(height=250, margin=dict(l=0, r=0, t=30, b=0))
             st.plotly_chart(fig_cov, width="stretch")
 
             st.subheader("MSA Slicing")
             st.write(f"MSA Length: {align_len}")
-
-            # Suggest range
-            s_start, s_end = suggest_msa_range(coverage)
-
+            s_start, s_end = suggest_msa_range(coverage.tolist())
             with st.form("msa_slicing_form"):
-                slice_range = st.slider(
-                    "Select MSA Region to Analyze",
-                    min_value=1,
-                    max_value=align_len,
-                    value=(s_start, s_end),
-                    help="Suggested range based on sequence coverage density."
-                )
-
-                start_pos, end_pos = slice_range
-
-                submitted = st.form_submit_button("Calculate Similarity from Slice")
-
-                if submitted:
+                start_pos, end_pos = st.slider("Select MSA Region to Analyze", min_value=1, max_value=align_len,
+                                               value=(s_start, s_end),
+                                               help="Suggested range based on sequence coverage density.")
+                if st.form_submit_button("Calculate Similarity from Slice"):
                     with st.spinner("Calculating similarity matrix..."):
-                        # Slice the alignment
-                        # Note: alignment objects can be sliced like lists/arrays: alignment[:, start:end]
-                        # But index is 0-based. Slider is 1-based.
-                        sliced_alignment = alignment[:, start_pos-1:end_pos]
-
-                        # Calculate identity matrix
-                        matrix, sorted_ids = calculate_similarity_matrix_from_msa(sliced_alignment, sequences)
-                        st.session_state.clustering_matrix = matrix
-                        st.session_state.clustering_ids = sorted_ids
+                        st.session_state.clustering_matrix = msa_identity_matrix(
+                            [s[start_pos - 1:end_pos] for s in aligned_seqs])
+                        st.session_state.clustering_ids = aligned_ids
 
     else: # Accurate Pairwise
         if st.button("Calculate Pairwise Similarity"):
@@ -334,13 +309,6 @@ def msa_identity_matrix(aligned):
     return matrix
 
 
-def calculate_similarity_matrix_from_msa(alignment, sequences):
-    """N×N identity matrix from a (sliced) MSA, in input-sequence order."""
-    aln_dict = {rec.id: str(rec.seq) for rec in alignment}
-    ids = [seq.id for seq in sequences if seq.id in aln_dict]
-    return msa_identity_matrix([aln_dict[i] for i in ids]), ids
-
-
 def pairwise_identity(aligned1, aligned2, mode, len1, len2):
     """Identity of a pairwise alignment.
 
@@ -446,20 +414,12 @@ def find_clusters(similarity_matrix, ids, threshold):
         clusters.append(component)
     return clusters
 
-def calculate_sequence_coverage(alignment):
-    """
-    Calculate the sequence coverage (number of non-gap residues) per column in the MSA.
-    """
-    length = alignment.get_alignment_length()
-    coverage = []
-
-    for i in range(length):
-        column = alignment[:, i]
-        # Count non-gap characters
-        count = sum(1 for char in column if char != '-')
-        coverage.append(count)
-
-    return coverage
+def calculate_sequence_coverage(aligned):
+    """Number of non-gap residues per alignment column."""
+    if not aligned:
+        return np.zeros(0, dtype=int)
+    arr = np.frombuffer("".join(aligned).encode(), dtype=np.uint8).reshape(len(aligned), -1)
+    return (arr != ord('-')).sum(axis=0)
 
 def suggest_msa_range(coverage, threshold_ratio=0.5):
     """

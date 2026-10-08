@@ -35,3 +35,17 @@ def test_strict_phylip_failure_raises_msa_error():
 def test_mutations_case_insensitive():
     muts = mutations_from_alignment([("ref", "MKV-L"), ("q", "MRVAL")], "ref")
     assert muts == {"q": [(2, "K", "R")]}
+
+
+from modules.clustering import calculate_sequence_coverage
+from modules.msa import aligned_to_msa
+
+
+def test_aligned_to_msa():
+    aln = aligned_to_msa([("a", "MK-V"), ("b", "MKLV")])
+    assert len(aln) == 2
+    assert aln.get_alignment_length() == 4
+
+
+def test_coverage_vectorized():
+    assert calculate_sequence_coverage(["MK-V", "M--V", "MKLV"]).tolist() == [3, 2, 1, 3]

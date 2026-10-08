@@ -36,3 +36,15 @@ def test_switching_input_format_clears_sequences():
     at = load(FASTA_A)
     at.selectbox(key="input_format").select("FASTA").run()
     assert any("Please upload" in i.value for i in at.info)
+
+
+def test_changing_msa_output_format_does_not_rerun():
+    at = load(FASTA_A)
+    at.selectbox(key="analysis_select").select("MSA").run()
+    at.button[0].click().run()
+    aligned = at.session_state["msa_aligned"]
+    assert aligned
+    at.selectbox(key="msa_output_format").select("clustal").run()
+    assert not at.exception
+    assert at.session_state["msa_aligned"] == aligned
+    assert not any("Settings changed" in i.value for i in at.info)

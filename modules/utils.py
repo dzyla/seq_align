@@ -23,10 +23,7 @@ amino_acid_map = {
 RESULT_KEYS = {
     "pairwise_result": None,
     "last_selected_seqs": None,
-    "msa_result": None,
-    "mutations": None,
-    "msa_image": None,
-    "msa_letters": None,
+    "msa_aligned": None,
     "consensus_data": None,
     "msa_tree": None,
     "best_match_results": None,
