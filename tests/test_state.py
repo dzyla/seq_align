@@ -1,0 +1,52 @@
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+
+from modules.seqtools import fingerprint
+from modules.utils import RESULT_KEYS, reset_all_results, track_dataset
+
+
+def rec(seq_id, seq):
+    return SeqRecord(Seq(seq), id=seq_id)
+
+
+def test_fingerprint_sensitive_to_content():
+    a = fingerprint([rec("x", "MKV"), rec("y", "MKL")])
+    assert a == fingerprint([rec("x", "MKV"), rec("y", "MKL")])
+    assert a != fingerprint([rec("x", "MKV"), rec("y", "MKI")])
+    assert a != fingerprint([rec("x", "MKV"), rec("z", "MKL")])
+
+
+def test_reset_all_results_restores_defaults():
+    state = {"pairwise_result": object(), "last_msa_params": {"a": 1}}
+    reset_all_results(state)
+    for key, default in RESULT_KEYS.items():
+        assert state[key] == default
+    state["last_msa_params"]["x"] = 1
+    assert RESULT_KEYS["last_msa_params"] == {}   # defaults are copied, never shared
+
+
+def test_track_dataset_resets_only_on_change():
+    state = {}
+    assert track_dataset("fp1", state) is True
+    state["pairwise_result"] = "kept"
+    assert track_dataset("fp1", state) is False
+    assert state["pairwise_result"] == "kept"
+    assert track_dataset("fp2", state) is True
+    assert state["pairwise_result"] is None
+
+
+def test_same_name_new_content_reparses():
+    import app
+    calls = []
+    state = {}
+
+    def loader():
+        calls.append(1)
+        return ("parsed", None)
+
+    key_v1 = ("FASTA", app._digest(b">a\nMKV\n"))
+    key_v2 = ("FASTA", app._digest(b">a\nMKL\n"))
+    app._load_once(key_v1, loader, state)
+    app._load_once(key_v1, loader, state)
+    app._load_once(key_v2, loader, state)
+    assert len(calls) == 2

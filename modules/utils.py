@@ -1,3 +1,5 @@
+import copy
+
 import streamlit as st
 from typing import List
 
@@ -17,43 +19,73 @@ amino_acid_map = {
     "PTR": "Y", "PCA": "E", "SAC": "S", "MLZ": "K"
 }
 
-def init_session_state():
-    """
-    Initialize session state variables if they don't exist.
-    This function ensures all required session state variables are properly initialized
-    to prevent KeyError exceptions and enable proper state tracking.
-    """
-    # Define the default values for session state variables
-    defaults = {
-        "msa_result": None,
-        "mutations": None,
-        "msa_image": None,
-        "msa_letters": None,
-        "consensus_data": None,
-        "pairwise_result": None,
-        "sequences": None,
-        "seq_type": None,
-        "last_file": None,
-        "last_tree_file": None,
-        "tree": None,
-        "tree_newick": None,
-        "converted_data": None,
-        "conversion_error": None,
-        "last_conversion_params": {},
-        "selected_seqs": None,
-        "last_msa_params": {},
-        "last_pairwise_params": {},
-        "last_text_hash": None,
-        "msa_tree": None,
-        "best_match_results": None,
-        "best_match_params": {},
-        "antibody_results": None,
-    }
+# Every analysis result and its parameter snapshot. Cleared together when the dataset changes.
+RESULT_KEYS = {
+    "pairwise_result": None,
+    "last_selected_seqs": None,
+    "msa_result": None,
+    "mutations": None,
+    "msa_image": None,
+    "msa_letters": None,
+    "consensus_data": None,
+    "msa_tree": None,
+    "best_match_results": None,
+    "clustering_matrix": None,
+    "clustering_ids": None,
+    "clustering_msa": None,
+    "converted_data": None,
+    "conversion_error": None,
+    "antibody_results": None,
+    "orf_results": None,
+    "pdb_renumber_results": None,
+    "pdb_renumber_hash": None,
+    "tree": None,
+    "tree_newick": None,
+    "last_msa_params": {},
+    "last_pairwise_params": {},
+    "best_match_params": {},
+    "last_conversion_params": {},
+}
 
-    # Initialize session state variables if they don't exist
+STALE_MESSAGE = "Settings changed since the last run. Click the run button to update the results."
+
+
+def init_session_state():
+    """Create every session key the app reads, without overwriting existing values."""
+    defaults = {
+        **RESULT_KEYS,
+        "seq_type": None,
+        "dataset_fp": None,
+        "input_key": None,
+        "input_cache": None,
+        "structures": {},
+    }
     for key, value in defaults.items():
         if key not in st.session_state:
-            st.session_state[key] = value
+            st.session_state[key] = copy.copy(value)
+
+
+def reset_all_results(state=None):
+    """Restore every result key to its default (fresh copies of mutable defaults)."""
+    state = st.session_state if state is None else state
+    for key, default in RESULT_KEYS.items():
+        state[key] = copy.copy(default)
+
+
+def track_dataset(fp, state=None):
+    """Reset all results when the dataset fingerprint changes. Returns True on change."""
+    state = st.session_state if state is None else state
+    if state.get("dataset_fp") == fp:
+        return False
+    reset_all_results(state)
+    state["dataset_fp"] = fp
+    return True
+
+
+def stale_notice(message=STALE_MESSAGE):
+    """Tell the user the shown inputs differ from the ones used for the stored result."""
+    st.info(message, icon="🔄")
+
 
 def have_params_changed(current_params: dict, last_params_key: str) -> bool:
     """

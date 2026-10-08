@@ -1,4 +1,5 @@
 """Sequence helpers shared by all analysis modules. No Streamlit calls."""
+import hashlib
 
 DNA_LETTERS = frozenset("ACGTNRYKMSWBDHV")
 # Alphabet of BLOSUM62 as shipped with Biopython.
@@ -22,3 +23,14 @@ def clean_sequence(seq, seq_type, keep_gaps=False):
         text = "".join(PROTEIN_SUBSTITUTIONS.get(c, c) for c in text)
         allowed = PROTEIN_LETTERS
     return "".join(c for c in text if c in allowed or (keep_gaps and c == "-"))
+
+
+def fingerprint(records):
+    """Order-sensitive SHA-1 over sequence IDs and residues; identifies a dataset."""
+    digest = hashlib.sha1()
+    for record in records:
+        digest.update(record.id.encode())
+        digest.update(b"\t")
+        digest.update(str(record.seq).encode())
+        digest.update(b"\n")
+    return digest.hexdigest()

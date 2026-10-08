@@ -4,13 +4,14 @@ import string
 import traceback
 
 import streamlit as st
-from Bio.PDB import MMCIFParser, PDBIO, PDBParser
+from Bio.PDB import PDBIO
 from Bio.PDB.mmcifio import MMCIFIO
 from Bio.PDB.Structure import Structure
 
 from modules.pairwise import get_aligner
 from modules.parsers import parse_sequences_from_file, parse_sequences_from_text, polymer_residues
 from modules.seqtools import clean_sequence
+from modules.structures import parse_structure
 from modules.utils import amino_acid_map
 
 HEADER_RECORDS = ("CRYST1", "SCALE", "ORIGX", "MTRIX")
@@ -177,7 +178,7 @@ def extract_header_records(pdb_text):
     return "".join(line + "\n" for line in pdb_text.splitlines() if line.startswith(HEADER_RECORDS))
 
 
-def pdb_renumber_section(pdb_file, pdb_format):
+def pdb_renumber_section(structures):
     """UI and workflow for PDB Residue Renumbering based on a target sequence."""
     st.header("🔢 PDB Residue Renumbering")
     st.info(
@@ -186,10 +187,12 @@ def pdb_renumber_section(pdb_file, pdb_format):
         "insertion codes (e.g. 52A); terminal overhangs continue the numbering outward. "
         "Ligands and waters keep their original numbers."
     )
-
-    if not pdb_file:
-        st.warning(f"Please upload a {pdb_format} file in the sidebar first.")
+    if not structures:
+        st.warning("Upload a PDB or mmCIF file in the sidebar first.")
         return
+
+    name = st.selectbox("Structure to renumber", list(structures), key="renumber_structure")
+    structure_file = structures[name]
 
     target_sequences = None
     target_fasta_text = st.text_area("Paste Target Sequences (FASTA format)")
@@ -205,23 +208,17 @@ def pdb_renumber_section(pdb_file, pdb_format):
     if not target_sequences:
         return
 
-    pdb_file.seek(0)
-    raw_text = pdb_file.read().decode("utf-8", errors="replace")
-    current_hash = hash((raw_text, tuple(str(s.seq) for s in target_sequences)))
-    if st.session_state.get('pdb_renumber_hash') != current_hash:
+    key = (structure_file.digest, tuple((s.id, str(s.seq)) for s in target_sequences))
+    if st.session_state.get('pdb_renumber_hash') != key:
         with st.spinner("Matching chains to target sequences..."):
             try:
-                parser = MMCIFParser(QUIET=True) if pdb_format == "mmCIF" else PDBParser(QUIET=True)
-                structure = parser.get_structure("renumber", io.StringIO(raw_text))
-                mappings, logs, visuals = prepare_renumbering(structure, target_sequences)
-                st.session_state.pdb_renumber_results = {
-                    'structure': structure, 'mappings': mappings, 'logs': logs, 'visuals': visuals,
-                }
-                st.session_state.pdb_renumber_hash = current_hash
+                mappings, logs, visuals = prepare_renumbering(parse_structure(structure_file), target_sequences)
             except Exception as e:
                 st.error(f"An error occurred: {e}")
                 st.text(traceback.format_exc())
                 return
+            st.session_state.pdb_renumber_results = {'mappings': mappings, 'logs': logs, 'visuals': visuals}
+            st.session_state.pdb_renumber_hash = key
 
     results = st.session_state.pdb_renumber_results
     st.subheader("Interactive Review & Confirmation")
@@ -233,30 +230,31 @@ def pdb_renumber_section(pdb_file, pdb_format):
         for msg in results['logs']:
             st.write(msg)
 
-    if pdb_format == "mmCIF":
+    is_cif = structure_file.fmt == "mmCIF"
+    if is_cif:
         st.caption("mmCIF output contains coordinates only; other mmCIF categories are not carried over.")
     st.warning("Please review the alignment above. If it looks correct, confirm the renumbering.")
 
     if st.button("Confirm Renumbering & Generate File"):
         try:
-            renumbered = apply_renumbering(results['structure'], results['mappings'])
+            renumbered = apply_renumbering(parse_structure(structure_file), results['mappings'])
         except ValueError as e:
             st.error(f"Renumbering aborted: {e}")
             return
-        writer = MMCIFIO() if pdb_format == "mmCIF" else PDBIO()
+        for note in renumbered.xtra.get("renumber_notes", []):
+            st.info(note)
+        writer = MMCIFIO() if is_cif else PDBIO()
         writer.set_structure(renumbered)
         out_stream = io.StringIO()
         writer.save(out_stream)
         content = out_stream.getvalue()
-        if pdb_format != "mmCIF":
-            content = extract_header_records(raw_text) + content
-        ext = ".cif" if pdb_format == "mmCIF" else ".pdb"
+        if not is_cif:
+            content = extract_header_records(structure_file.text) + content
+        ext = ".cif" if is_cif else ".pdb"
         st.success("Renumbering completed successfully!")
-        for note in renumbered.xtra.get("renumber_notes", []):
-            st.info(note)
         st.download_button(
-            label=f"📥 Download Renumbered {pdb_format}",
+            label=f"📥 Download Renumbered {structure_file.fmt}",
             data=content,
-            file_name=f"{pdb_file.name.rsplit('.', 1)[0]}_renumbered{ext}",
-            mime="chemical/x-mmcif" if pdb_format == "mmCIF" else "chemical/x-pdb",
+            file_name=f"{structure_file.stem}_renumbered{ext}",
+            mime="chemical/x-mmcif" if is_cif else "chemical/x-pdb",
         )
