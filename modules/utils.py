@@ -47,6 +47,7 @@ def init_session_state():
         "msa_tree": None,
         "best_match_results": None,
         "best_match_params": {},
+        "antibody_results": None,
     }
 
     # Initialize session state variables if they don't exist
