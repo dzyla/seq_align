@@ -112,3 +112,12 @@ def test_chain_key_depends_on_reference():
     assert _chain_key("k", "AAAA") == _chain_key("k", "AAAA")
     assert _chain_key("k", "AAAA") != _chain_key("k", "CCCC")
     assert _chain_key("k", "AAAA").startswith("k_chain")
+
+
+def test_with_background_sets_canvas_colour():
+    import molviewspec as mvs
+    from modules.structure_view import with_background
+    b = mvs.create_builder()
+    with_background(b, "dark")
+    canvas = [c for c in b.get_state().root.children if c.kind == "canvas"]
+    assert canvas and canvas[0].params["background_color"] == "#1a1916"

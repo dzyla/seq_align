@@ -22,7 +22,7 @@ from modules.pdb_renumber import pdb_renumber_section
 from modules.properties import sequence_properties_section
 from modules.structure_view import structure_viewer_section
 from modules.phylogeny import TREE_METHODS, TreeError, build_phylogenetic_tree, phylogenetic_tree_section
-from modules.ui import page_header
+from modules.ui import appearance_popover, apply_density, page_header, sidebar_group
 from modules.overview import EXAMPLES, load_example_callback, show_dataset_overview
 from modules.seqtools import detect_seq_type, fingerprint
 from modules.structures import STRUCTURE_FORMATS, StructureFile
@@ -176,13 +176,7 @@ def handle_input(input_format):
     return result, None
 
 
-def main():
-    st.set_page_config(page_title="Advanced Sequence Alignment Tool", page_icon="🔬", layout="wide")
-    init_session_state()
-
-    st.title("🔬 Advanced Sequence Alignment Tool")
-    with st.expander("ℹ️ How to use this tool"):
-        st.markdown("""
+GUIDE = """
 Align, compare and annotate **DNA** or **protein** sequences and structures.
 
 1. **Load data** in the sidebar: paste FASTA, upload a sequence or structure file, or load an example.
@@ -195,41 +189,68 @@ the **Structure Viewer** (Mol*), and the **Show on structure** panels map mutati
 
 Pairwise alignments support Global, Local and Overlap (free end gaps) modes. MSA uses FAMSA.
 Mutation positions are always reported in reference-sequence coordinates.
-""")
+"""
 
-    st.sidebar.header("📥 Upload and Settings")
+
+def _sidebar_footer(sequences=None, seq_type=None):
+    """Export button (when there are results) and the Appearance popover, at the bottom of the sidebar."""
+    st.sidebar.divider()
+    if sequences and has_results(st.session_state):
+        st.sidebar.download_button("Export session", data=build_session_zip(st.session_state, sequences, seq_type),
+                                   file_name="seq_align_session.zip", mime="application/zip",
+                                   icon=":material/ios_share:", on_click="ignore", width="stretch",
+                                   help="All current results, the input sequences and the parameters used.")
+    appearance_popover()
+
+
+def main():
+    st.set_page_config(page_title="seq_align", page_icon=":material/genetics:", layout="wide")
+    init_session_state()
+    apply_density()
+
+    c_title, c_guide = st.columns([6, 1], vertical_alignment="center")
+    with c_title:
+        st.title("seq_align", anchor=False)
+        st.caption("Align, compare and annotate DNA and protein sequences and structures.")
+    with c_guide.popover("Guide", icon=":material/menu_book:", width="stretch"):
+        st.markdown(GUIDE)
+
+    sidebar_group("Data")
     c_ex, c_btn = st.sidebar.columns([3, 1], vertical_alignment="bottom")
     c_ex.selectbox("Example data", ["—"] + list(EXAMPLES), key="example_choice")
     c_btn.button("Load", key="load_example", on_click=load_example_callback,
                  disabled=st.session_state.get("example_choice", "—") == "—")
-    input_format = st.sidebar.selectbox("Select Input Format", INPUT_FORMATS, key="input_format",
+    input_format = st.sidebar.selectbox("Input format", INPUT_FORMATS, key="input_format",
                                         help="Choose the format of your input sequences.")
     sequences, tree = handle_input(input_format)
 
     if tree is not None:
         page_header("Phylogenetic tree", "Your uploaded Newick tree, ready to style and export.")
         phylogenetic_tree_section(tree, key_prefix="newick")
+        _sidebar_footer()
         return
     if not sequences:
-        st.info("Please upload sequences or a Newick tree in the sidebar to begin.")
+        st.info("Load sequences in the sidebar to begin: paste FASTA, upload a file, fetch by ID or pick an example.")
+        _sidebar_footer()
         return
 
     changed = track_dataset(fingerprint(sequences))
     detected = detect_seq_type([str(s.seq) for s in sequences])
     if changed or "seq_type_select" not in st.session_state:
         st.session_state.seq_type_select = detected
-    seq_type = st.sidebar.selectbox("🔬 Sequence Type", ("DNA", "Protein"), key="seq_type_select",
+    sidebar_group("Analysis")
+    seq_type = st.sidebar.selectbox("Sequence type", ("DNA", "Protein"), key="seq_type_select",
                                     help=f"Auto-detected as {detected}. Change it if the detection is wrong.")
     if st.session_state.get("seq_type") != seq_type:
         st.session_state.seq_type = seq_type
         reset_all_results()
     structures = st.session_state.get("structures", {})
-    show_dataset_overview(sequences, seq_type)
+    show_dataset_overview(sequences, seq_type, len(structures))
 
     options = available_analyses(bool(sequences), bool(structures), seq_type, len(sequences))
     if st.session_state.get("analysis_select") not in options:
         st.session_state.analysis_select = options[0]
-    alignment_mode = st.sidebar.selectbox("🛠️ Select Analysis", options, key="analysis_select")
+    alignment_mode = st.sidebar.radio("Analysis", options, key="analysis_select", label_visibility="collapsed")
 
     if alignment_mode == "Extracted Sequences":
         st.header("📄 Extracted FASTA Sequences")
@@ -285,12 +306,7 @@ Mutation positions are always reported in reference-sequence coordinates.
             else:
                 phylogenetic_tree_section(stored["tree"], key_prefix="tree")
 
-    if has_results(st.session_state):
-        st.sidebar.divider()
-        st.sidebar.download_button("📦 Export session (ZIP)",
-                                   data=build_session_zip(st.session_state, sequences, seq_type),
-                                   file_name="seq_align_session.zip", mime="application/zip", on_click="ignore",
-                                   help="All current results, the input sequences and the parameters used.")
+    _sidebar_footer(sequences, seq_type)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ def load(text):
 
 
 def run_pairwise(at):
-    at.selectbox(key="analysis_select").select("Pairwise").run()
+    at.radio(key="analysis_select").set_value("Pairwise").run()
     at.button[0].click().run()
     assert not at.exception
     return at
@@ -29,18 +29,18 @@ def test_parse_error_does_not_show_previous_dataset():
     at = load(FASTA_A)
     at.text_area(key="fasta_text").input("not fasta").run()
     assert len(at.sidebar.error) == 1
-    assert any("Please upload" in i.value for i in at.info)
+    assert any("Load sequences" in i.value for i in at.info)
 
 
 def test_switching_input_format_clears_sequences():
     at = load(FASTA_A)
     at.selectbox(key="input_format").select("FASTA").run()
-    assert any("Please upload" in i.value for i in at.info)
+    assert any("Load sequences" in i.value for i in at.info)
 
 
 def test_changing_msa_output_format_does_not_rerun():
     at = load(FASTA_A)
-    at.selectbox(key="analysis_select").select("MSA").run()
+    at.radio(key="analysis_select").set_value("MSA").run()
     at.button[0].click().run()
     aligned = at.session_state["msa_aligned"]
     assert aligned
@@ -52,7 +52,7 @@ def test_changing_msa_output_format_does_not_rerun():
 
 def test_tree_built_only_on_button_and_reset_with_dataset():
     at = load(FASTA_A)
-    at.selectbox(key="analysis_select").select("Phylogenetic Tree").run()
+    at.radio(key="analysis_select").set_value("Phylogenetic Tree").run()
     assert at.session_state["tree_result"] is None
     at.button(key="build_tree").click().run()
     assert not at.exception
@@ -67,7 +67,7 @@ DNA = ">g\n" + "ATG" + "GCC" * 40 + "TAA" + "\n>h\nATGAAACCCGGGTTTTAA\n"
 def test_orf_results_survive_rerun():
     at = load(DNA)
     at.selectbox(key="seq_type_select").select("DNA").run()
-    at.selectbox(key="analysis_select").select("Translate DNA").run()
+    at.radio(key="analysis_select").set_value("Translate DNA").run()
     before = len(at.dataframe)                 # the dataset overview table
     at.button(key="find_orfs").click().run()
     assert len(at.dataframe) == before + 1
@@ -84,7 +84,7 @@ def test_pairwise_shows_stale_notice_after_param_change():
 def test_title_has_no_ability_wording():
     at = AppTest.from_file("app.py", default_timeout=60)
     at.run()
-    assert at.title[0].value == "🔬 Advanced Sequence Alignment Tool"
+    assert at.title[0].value == "seq_align"
     assert all("Abilit" not in m.value for m in at.markdown)
 
 
@@ -104,10 +104,10 @@ def test_load_example_button():
 
 def test_analysis_falls_back_when_unavailable():
     at = load(">x\nATGCATGCATGCATGC\n>y\nATGCATGAATGCATGC\n")
-    at.selectbox(key="analysis_select").select("Translate DNA").run()
+    at.radio(key="analysis_select").set_value("Translate DNA").run()
     at.selectbox(key="seq_type_select").select("Protein").run()
     assert not at.exception
-    assert at.selectbox(key="analysis_select").value != "Translate DNA"
+    assert at.radio(key="analysis_select").value != "Translate DNA"
 
 
 def test_fetch_pdb_offers_structure_tools(monkeypatch):
@@ -129,7 +129,7 @@ def test_fetch_pdb_offers_structure_tools(monkeypatch):
     at.text_input(key="fetch_ids").input("1CRN").run()
     at.button(key="fetch_button").click().run()
     assert not at.exception
-    assert "PDB Residue Renumbering" in at.selectbox(key="analysis_select").options
+    assert "PDB Residue Renumbering" in at.radio(key="analysis_select").options
 
 
 def test_conservation_tab_without_protein_chains_warns():
@@ -141,7 +141,7 @@ def test_conservation_tab_without_protein_chains_warns():
     at.selectbox(key="example_choice").select("Globins (protein)").run()
     at.button(key="load_example").click().run()
     at.session_state["extra_structures"] = {"1bna.cif": StructureFile("1bna.cif", data, "mmCIF")}
-    at.selectbox(key="analysis_select").select("MSA").run()
+    at.radio(key="analysis_select").set_value("MSA").run()
     at.button[0].click().run()
     assert not at.exception
     assert any("No protein chains" in w.value for w in at.warning)
@@ -157,7 +157,7 @@ def test_antibody_tabs_render():
     at.run()
     at.selectbox(key="example_choice").select("Antibody VH/VL (protein)").run()
     at.button(key="load_example").click().run()
-    at.selectbox(key="analysis_select").select("Antibody Prediction").run()
+    at.radio(key="analysis_select").set_value("Antibody Prediction").run()
     at.button(key="predict_domains").click().run()
     assert not at.exception
     assert [t.label for t in at.tabs][:4] == ["Domains", "Germlines", "Liabilities", "Pairs"]
@@ -168,7 +168,7 @@ def test_antibody_tabs_render():
 
 def test_msa_logo_and_identity_export_render():
     at = load(FASTA_A)
-    at.selectbox(key="analysis_select").select("MSA").run()
+    at.radio(key="analysis_select").set_value("MSA").run()
     at.button[0].click().run()
     assert not at.exception
     assert at.session_state["logo_window"] == (1, 11)
@@ -180,7 +180,7 @@ def test_msa_logo_guard_for_single_column(monkeypatch):
     import modules.msa as msa_module
     monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": [("a", "M"), ("b", "K")])
     at = load(">a\nM\n>b\nK\n")
-    at.selectbox(key="analysis_select").select("MSA").run()
+    at.radio(key="analysis_select").set_value("MSA").run()
     at.button[0].click().run()
     assert not at.exception
     assert any("Logo needs at least 2 columns" in c.value for c in at.caption)
@@ -192,7 +192,7 @@ def _load_globins_msa():
     at.run()
     at.selectbox(key="example_choice").select("Globins (protein)").run()
     at.button(key="load_example").click().run()
-    at.selectbox(key="analysis_select").select("MSA").run()
+    at.radio(key="analysis_select").set_value("MSA").run()
     at.button[0].click().run()
     assert not at.exception
     return at
@@ -214,7 +214,7 @@ def test_msa_all_columns_trimmed_shows_one_warning(monkeypatch):
     monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": [
         ("a", "MK-"), ("b", "-LA"), ("c", "M--")])
     at = load(">a\nMKV\n>b\nLAV\n>c\nMLV\n")
-    at.selectbox(key="analysis_select").select("MSA").run()
+    at.radio(key="analysis_select").set_value("MSA").run()
     at.button[0].click().run()
     assert not at.exception
     at.slider(key="msa_trim").set_value(0.0).run()
@@ -228,7 +228,7 @@ def test_similarity_matrix_colour_range_controls():
     at.run()
     at.selectbox(key="example_choice").select("Globins (protein)").run()
     at.button(key="load_example").click().run()
-    at.selectbox(key="analysis_select").select("Sequence Clustering").run()
+    at.radio(key="analysis_select").set_value("Sequence Clustering").run()
     next(s for s in at.selectbox if s.label == "Similarity Method").set_value("Accurate (Pairwise)").run()
     next(b for b in at.button if "Calculate Pairwise Similarity" in b.label).click().run()
     assert not at.exception
@@ -240,7 +240,16 @@ def test_similarity_matrix_colour_range_controls():
 
 def test_tree_page_shows_figure_downloads():
     at = load(FASTA_A)
-    at.selectbox(key="analysis_select").select("Phylogenetic Tree").run()
+    at.radio(key="analysis_select").set_value("Phylogenetic Tree").run()
     at.button(key="build_tree").click().run()
     assert not at.exception
     assert "SVG" in [d.label for d in at.get("download_button")]
+
+
+def test_shell_has_sidebar_groups_and_appearance():
+    at = load(FASTA_A)
+    assert not at.exception
+    labels = [c.value for c in at.sidebar.caption]
+    assert "**DATA**" in labels and "**ANALYSIS**" in labels
+    assert at.session_state["appearance_palette"] == "Lab teal"
+    assert [m.label for m in at.metric][:4] == ["Sequences", "Type", "Length range", "Median length"]

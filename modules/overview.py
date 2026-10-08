@@ -31,14 +31,17 @@ def summary_table(records, preview=40):
     return pd.DataFrame(rows, columns=["ID", "Length", "Preview"])
 
 
-def show_dataset_overview(records, seq_type):
+def show_dataset_overview(records, seq_type, n_structures=0):
+    """Bordered metric cards for the loaded dataset, with the sequence list in an expander."""
     summary = dataset_summary(records)
-    with st.expander(f"📊 Dataset: {summary['count']} {seq_type} sequences", expanded=False):
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Sequences", summary["count"])
-        c2.metric("Shortest", summary["min_length"])
-        c3.metric("Median length", summary["median_length"])
-        c4.metric("Longest", summary["max_length"])
+    cols = st.columns(5 if n_structures else 4)
+    cols[0].metric("Sequences", summary["count"], border=True)
+    cols[1].metric("Type", seq_type, border=True)
+    cols[2].metric("Length range", f"{summary['min_length']}–{summary['max_length']}", border=True)
+    cols[3].metric("Median length", summary["median_length"], border=True)
+    if n_structures:
+        cols[4].metric("Structures", n_structures, border=True)
+    with st.expander("Sequence list"):
         st.dataframe(summary_table(records), hide_index=True, width="stretch")
 
 

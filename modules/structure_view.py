@@ -98,8 +98,19 @@ def build_view_state(sf, chain_ids, color_mode="chain", highlights=(), base_colo
     return builder
 
 
+def with_background(builder, theme):
+    """Set the Mol* canvas to the app's day or night background."""
+    from modules.ui import MOLSTAR_BACKGROUND
+
+    builder.canvas(background_color=MOLSTAR_BACKGROUND[theme])
+    return builder
+
+
 def render_molstar(sf, builder, height=600):
     """Embed Mol* with the structure packed into an MVSX archive (no hosting needed)."""
+    from modules.ui import theme_type
+
+    with_background(builder, theme_type())
     mvs.molstar_streamlit(builder, data={archive_name(sf): sf.data}, height=height,
                           molstar_version=MOLSTAR_VERSION)
 
