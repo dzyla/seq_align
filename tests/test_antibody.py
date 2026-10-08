@@ -127,3 +127,21 @@ def test_separate_chains_paired_by_stem():
 def test_unpaired_listed():
     pairs, unpaired = pair_domains([_row("lonely_H", 1, "H")])
     assert pairs == [] and unpaired == ["lonely_H (domain 1, H)"]
+
+
+from modules.antibody import CDR_COLORS, LIABILITY_COLOR, cdr_position_colors
+
+
+def test_cdr_position_colors():
+    row = {"Sequence": "AGYW", "Chain Type": "H", "_labels": ["26", "27", "105", "118"],
+           "_regions": ["FR1", "CDR1", "CDR3", "FR4"]}
+    colors = cdr_position_colors(row)
+    assert colors == {2: (CDR_COLORS["CDR1"], "CDR-H1 G27"), 3: (CDR_COLORS["CDR3"], "CDR-H3 Y105")}
+    with_liab = cdr_position_colors(row, include_liabilities=True,
+                                    liabilities=[{"Position": "118", "Liability": "Oxidation", "Motif": "W"}])
+    assert with_liab[4] == (LIABILITY_COLOR, "Oxidation W118")
+
+
+def test_unknown_chain_type_skips_cysteine_rule():
+    flags = find_liabilities("C", ["10"], ["FR1"], "kabat", "A")
+    assert not [f for f in flags if f["Liability"] == "Unpaired cysteine"]

@@ -145,3 +145,19 @@ def test_conservation_tab_without_protein_chains_warns():
     at.button[0].click().run()
     assert not at.exception
     assert any("No protein chains" in w.value for w in at.warning)
+
+
+import shutil
+import pytest
+
+
+@pytest.mark.skipif(shutil.which("hmmscan") is None, reason="HMMER not installed")
+def test_antibody_tabs_render():
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Antibody VH/VL (protein)").run()
+    at.button(key="load_example").click().run()
+    at.selectbox(key="analysis_select").select("Antibody Prediction").run()
+    at.button(key="predict_domains").click().run()
+    assert not at.exception
+    assert [t.label for t in at.tabs][:4] == ["Domains", "Germlines", "Liabilities", "Pairs"]

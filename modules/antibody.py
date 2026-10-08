@@ -71,6 +71,26 @@ def residue_regions(numbering, scheme, chain_type):
     return out
 
 
+CDR_COLORS = {"CDR1": "#e15759", "CDR2": "#59a14f", "CDR3": "#4e79a7"}
+LIABILITY_COLOR = "#ff9f1c"
+
+
+def cdr_position_colors(row, include_liabilities=False, liabilities=()):
+    """1-based positions in row['Sequence'] -> (color, label) for CDR residues and optional liabilities."""
+    chain_letter = "H" if row["Chain Type"] == "H" else "L"
+    colors = {}
+    for i, (aa, label, region) in enumerate(zip(row["Sequence"], row["_labels"], row["_regions"]), start=1):
+        if region in CDR_COLORS:
+            colors[i] = (CDR_COLORS[region], f"CDR-{chain_letter}{region[-1]} {aa}{label}")
+    if include_liabilities:
+        index = {label: i for i, label in enumerate(row["_labels"], start=1)}
+        for flag in liabilities:
+            pos = index.get(flag["Position"])
+            if pos:
+                colors[pos] = (LIABILITY_COLOR, f"{flag['Liability']} {flag['Motif']}{flag['Position']}")
+    return colors
+
+
 def find_liabilities(sequence, labels, regions, scheme, chain_type):
     """Flag common sequence liabilities in one numbered domain (for review, not prediction)."""
     found = []
@@ -81,7 +101,7 @@ def find_liabilities(sequence, labels, regions, scheme, chain_type):
                 continue
             found.append({"Liability": name, "Motif": match.group(1), "Position": labels[i],
                           "Region": regions[i], "Severity": severity})
-    canonical = CANONICAL_CYSTEINES.get(scheme.lower(), {}).get("H" if chain_type == "H" else "L")
+    canonical = CANONICAL_CYSTEINES.get(scheme.lower(), {}).get({"H": "H", "K": "L", "L": "L"}.get(chain_type))
     if canonical is not None:
         for i, aa in enumerate(sequence):
             number = int(re.match(r"\d+", labels[i]).group())
@@ -229,7 +249,7 @@ def antibody_prediction_section(sequences):
     params = {"ids": tuple(s.id for s in sequences), "seqs": tuple(str(s.seq) for s in sequences),
               "scheme": scheme, "species": tuple(species), "threshold": threshold}
 
-    if st.button("Predict Domains"):
+    if st.button("Predict Domains", key="predict_domains"):
         with st.spinner("Running ANARCI..."):
             try:
                 df = run_numbering([(s.id, str(s.seq)) for s in sequences], scheme,
@@ -254,22 +274,61 @@ def antibody_prediction_section(sequences):
         return
 
     st.success(f"Found {len(df)} domains.")
-    has_regions = "CDR1" in df.columns
-    if has_regions:
+
+    from modules.structure_view import structure_highlight_panel  # local: avoids a circular import
+
+    liabilities_by_row = {
+        idx: find_liabilities(row["Sequence"], row["_labels"], row["_regions"], scheme, row["Chain Type"])
+        for idx, row in df.iterrows()
+    }
+    tab_domains, tab_germ, tab_liab, tab_pairs, tab_3d = st.tabs(
+        ["Domains", "Germlines", "Liabilities", "Pairs", "Structure"])
+
+    with tab_domains:
         cols = ["Sequence ID", "Chain Type", "Species", "CDR1", "CDR2", "CDR3", "Score", "E-value", "Sequence"]
-        st.dataframe(df[[c for c in cols if c in df.columns]])
-    else:
-        st.caption(f"CDR definitions are not available for the {scheme} scheme; showing numbering only.")
-        st.dataframe(df[public_columns(df)])
-
-    st.download_button("Download CSV", df[public_columns(df)].to_csv(index=False), "antibody_domains.csv",
-                       "text/csv", on_click="ignore")
-
-    st.subheader("Detailed Domain View")
-    for _, row in df.iterrows():
-        with st.expander(f"{row['Sequence ID']} - Domain {row['Domain Index']} ({row['Chain Type']})"):
-            st.json({k: (v if not hasattr(v, "item") else v.item()) for k, v in row.to_dict().items()
-                     if not str(k).startswith("_")})
-            if has_regions:
-                st.markdown(f"### Regions ({scheme})")
+        st.dataframe(df[[c for c in cols if c in df.columns]], hide_index=True)
+        if "CDR1" not in df.columns:
+            st.caption(f"CDR definitions are not available for the {scheme} scheme; showing numbering only.")
+        st.download_button("Download CSV", df[public_columns(df)].to_csv(index=False), "antibody_domains.csv",
+                           "text/csv", on_click="ignore")
+        for idx, row in df.iterrows():
+            with st.expander(f"{row['Sequence ID']} - Domain {row['Domain Index']} ({row['Chain Type']})"):
                 st.markdown(_regions_html(row), unsafe_allow_html=True)
+                st.code(row["Numbering"])
+
+    with tab_germ:
+        st.dataframe(df[["Sequence ID", "Domain Index", "Chain Type", "Germline Species", "V Gene",
+                         "V Identity (%)", "J Gene", "J Identity (%)"]], hide_index=True)
+        st.caption("Closest germline by sequence identity over the numbered V/J region (ANARCI).")
+
+    with tab_liab:
+        rows = [{"Sequence ID": df.loc[i, "Sequence ID"], "Domain": df.loc[i, "Domain Index"], **flag}
+                for i, flags in liabilities_by_row.items() for flag in flags]
+        if rows:
+            st.dataframe(pd.DataFrame(rows), hide_index=True)
+            st.download_button("Download liabilities (CSV)", pd.DataFrame(rows).to_csv(index=False),
+                               "antibody_liabilities.csv", "text/csv", on_click="ignore")
+        else:
+            st.write("No liability motifs found.")
+        caption = ("Sequence motifs associated with chemical or expression liabilities; flags for review, "
+                   "not predictions. Oxidation is reported only in CDRs.")
+        if "CDR1" not in df.columns:
+            caption += " Oxidation is not assessed because this numbering scheme has no CDR definitions."
+        st.caption(caption)
+
+    with tab_pairs:
+        pairs, unpaired = pair_domains(df.to_dict("records"))
+        if pairs:
+            st.dataframe(pd.DataFrame(pairs), hide_index=True)
+        if unpaired:
+            st.caption("Unpaired domains: " + "; ".join(unpaired))
+
+    with tab_3d:
+        labels = {idx: f"{r['Sequence ID']} domain {r['Domain Index']} ({r['Chain Type']})" for idx, r in df.iterrows()}
+        chosen = st.selectbox("Domain", list(labels), format_func=labels.get, key="ab_3d_domain")
+        show_liab = st.checkbox("Also mark liabilities (orange)", key="ab_3d_liab")
+        row = df.loc[chosen]
+        structure_highlight_panel(row["Sequence"],
+                                  cdr_position_colors(row, show_liab, liabilities_by_row[chosen]),
+                                  key="ab_3d", title="🧊 CDRs on structure (Mol*)")
+        st.caption("CDR1 red · CDR2 green · CDR3 blue" + (" · liabilities orange" if show_liab else ""))
