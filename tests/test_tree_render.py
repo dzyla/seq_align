@@ -181,3 +181,95 @@ def test_support_numbers_are_editable_svg_text():
     geo = compute_geometry(prepare_tree(t, "as_built"), "rectangular")
     svg = export_bytes(render_matplotlib(place(geo, TreeStyle(style="classic", support_min=50))), "svg")
     assert b">90<" in svg and b">70<" in svg
+
+
+def test_palette_has_twelve_distinct_colours_without_black():
+    from modules.tree_render import PALETTE
+    assert len(set(PALETTE)) == 12 and "#000000" not in PALETTE
+
+
+def test_night_explore_recolours_dot_faces():
+    t = Phylo.read(StringIO("((A:0.1,B:0.2)99:0.3,(C:0.2,D:0.1)40:0.2);"), "newick")
+    drawing = place(compute_geometry(prepare_tree(t, "as_built"), "rectangular"), TreeStyle(style="dots",
+                                                                                           support_min=0))
+    marker = next(tr for tr in render_plotly(drawing, dark=True).data
+                  if tr.mode == "markers" and tr.marker.opacity != 0)
+    faces = dict(zip(marker.text, marker.marker.color))
+    assert faces["support 99"] == "#ece8df" and faces["support 40"] == "#1a1916"
+    assert "#1a1a1a" not in set(marker.marker.line.color)
+
+
+def support_rectangles(fig):
+    """Corner points (pixels) of every rendered support number (unrotated)."""
+    renderer = fig.canvas.get_renderer()
+    rects = []
+    for t in fig.axes[0].texts:
+        if t.get_gid() == "support":
+            b = t.get_window_extent(renderer)
+            rects.append(np.array([(b.x0, b.y0), (b.x1, b.y0), (b.x1, b.y1), (b.x0, b.y1)]))
+    return rects
+
+
+@pytest.mark.parametrize("layout", ["rectangular", "circular", "unrooted"])
+@pytest.mark.parametrize("n,seed", [(50, 50), (50, 7), (10, 10)])
+def test_classic_support_numbers_never_overlap(layout, n, seed):
+    _, fig = draw(n, layout, seed=seed)
+    supports, leaves = support_rectangles(fig), leaf_rectangles(fig)
+    bad = [(i, j) for i in range(len(supports)) for j in range(i + 1, len(supports))
+           if overlaps(supports[i], supports[j])]
+    bad += [(i, -j) for i, s in enumerate(supports) for j, leaf in enumerate(leaves) if overlaps(s, leaf)]
+    assert not bad, f"{len(bad)} overlapping support boxes"
+
+
+@pytest.mark.parametrize("layout", ["circular", "unrooted"])
+def test_crowded_classic_support_falls_back_to_dots_with_warning(layout):
+    roomy, _ = draw(10, layout)
+    assert [t for t in roomy.texts if t.kind == "support"] and roomy.warning is None
+    crowded, _ = draw(50, layout)
+    assert not [t for t in crowded.texts if t.kind == "support"] and crowded.dots
+    assert crowded.warning == "Support numbers would overlap; support is shown as dots."
+    assert "≥95" in {t.text for t in crowded.texts if t.kind == "legend"}
+
+
+def test_clade_legend_wraps_inside_narrow_figure():
+    t = prepare_tree(random_tree(50, 50), "midpoint")
+    drawing = place(compute_geometry(t, "circular", False, assign_clades(t, 12)),
+                    TreeStyle(style="clades", width_cm=8.0))
+    legend = [x for x in drawing.texts if x.kind == "legend"]
+    assert {f"Clade {i}" for i in range(1, 13)} <= {x.text for x in legend}
+    assert all(x.x + x.width <= drawing.width + 1e-9 for x in legend)
+    for xs, ys, _, alpha in drawing.fills:
+        if alpha == 1.0:
+            assert min(xs) >= 0 and max(xs) <= drawing.width and min(ys) >= 0 and max(ys) <= drawing.height
+    assert all(0 <= x.y <= drawing.height for x in drawing.texts)
+
+
+@pytest.mark.parametrize("layout", ["circular", "unrooted"])
+def test_dot_legend_only_when_tree_has_supports(layout):
+    t = prepare_tree(Phylo.read(StringIO("((A:0.1,B:0.2):0.3,(C:0.2,D:0.1):0.2,E:0.4);"), "newick"), "midpoint")
+    for style in ("dots", "clades"):
+        drawing = place(compute_geometry(t, layout, False, assign_clades(t, 2)), TreeStyle(style=style))
+        assert "≥95" not in {x.text for x in drawing.texts}
+
+
+@pytest.mark.parametrize("layout", ["circular", "unrooted"])
+def test_clade_colour_shows_dot_legend_below_clade_legend(layout):
+    drawing, _ = draw(20, layout, style="clades")
+    legend = {x.text: x for x in drawing.texts if x.kind == "legend"}
+    assert "≥95" in legend and "Clade 1" in legend
+    assert legend["≥95"].y < legend["Clade 1"].y
+
+
+def test_svg_records_the_chosen_font_family():
+    drawing, _ = draw(6, "rectangular", font_family="Arial")
+    assert drawing.font_choice == "Arial"
+    svg = export_bytes(render_matplotlib(drawing), "svg").decode()
+    assert "'Arial'" in svg
+
+
+def test_render_and_export_emit_no_findfont_warnings(caplog):
+    drawing, _ = draw(6, "rectangular", font_family="Times New Roman")
+    with caplog.at_level("WARNING", logger="matplotlib.font_manager"):
+        export_bytes(render_matplotlib(drawing), "svg")
+        export_bytes(render_matplotlib(drawing), "pdf")
+    assert not [r for r in caplog.records if "findfont" in r.getMessage()]

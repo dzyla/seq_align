@@ -2,7 +2,9 @@
 with matplotlib (exported figure) or plotly (interactive view). Uses matplotlib.figure.Figure directly,
 never pyplot, so no global figure registry or GUI backend is involved."""
 import html
+import logging
 import math
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from io import BytesIO
 
@@ -15,13 +17,17 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Polygon
 
 STYLES = {"Classic ink": "classic", "Support dots": "dots", "Clade colour": "clades"}
-PALETTE = ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#000000", "#B8860B")
+# 12 colour-blind-aware colours (Okabe-Ito, then Tol muted/bright), no black or yellow on white
+PALETTE = ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#332288", "#882255", "#999933",
+           "#CC6677", "#117733", "#44AA99")
 FONTS = {
     "Arial": ("Arial", "Helvetica", "Liberation Sans", "Nimbus Sans", "DejaVu Sans"),
     "Inter": ("Inter", "Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"),
     "Times New Roman": ("Times New Roman", "Times", "Liberation Serif", "Nimbus Roman", "DejaVu Serif"),
 }
 INK, SUPPORT_GREY, LEADER_GREY = "#1a1a1a", "#6b6b6b", "#b5b5b5"
+NIGHT_COLOURS = {INK: "#ece8df", SUPPORT_GREY: "#a59f91", "white": "#1a1916"}  # Explore view, night theme
+SUPPORT_OVERLAP = "Support numbers would overlap; support is shown as dots."
 MIN_FONT, LABEL_LIMIT = 5.0, 500
 EXPORT_FORMATS = {"svg": "image/svg+xml", "pdf": "application/pdf", "png": "image/png"}
 
@@ -67,8 +73,19 @@ class Drawing:
     dots: list = field(default_factory=list)    # (x, y, face, edge, size_pt, hover)
     texts: list = field(default_factory=list)   # Text
     fills: list = field(default_factory=list)   # (xs, ys, color, alpha) closed polygons
-    family: str = "DejaVu Sans"
+    family: str = "DejaVu Sans"     # resolved (installed) font, used for measuring
     warning: str | None = None
+    font_choice: str = "Arial"      # the requested family, written first in exports (SVG keeps it)
+
+
+def _shift(drawing, dy):
+    """Move everything up by dy inches and grow the figure to match."""
+    drawing.lines = [(xs, [y + dy for y in ys], *rest) for xs, ys, *rest in drawing.lines]
+    drawing.dots = [(x, y + dy, *rest) for x, y, *rest in drawing.dots]
+    drawing.fills = [(xs, [y + dy for y in ys], *rest) for xs, ys, *rest in drawing.fills]
+    for t in drawing.texts:
+        t.y += dy
+    drawing.height += dy
 
 
 def resolve_family(choice):
@@ -132,15 +149,69 @@ def _color(clade, style):
     return PALETTE[clade % len(PALETTE)] if style.style == "clades" and clade is not None else INK
 
 
-def _support_marks(drawing, x, y, support, style, size, dots, dot_size):
-    if support is None or support < style.support_min:
-        return
-    if dots:
+def _corners(t, pad=0.0):
+    """Corner points (inches) of a measured text box anchored at (x, y) by ha/va, rotated about the anchor."""
+    w, h = t.width + 2 * pad, t.height + 2 * pad
+    x0 = {"left": 0.0, "right": -w, "center": -w / 2}[t.ha] + (pad if t.ha == "left" else -pad if t.ha == "right"
+                                                                 else 0.0)
+    y0 = {"bottom": 0.0, "top": -h, "center": -h / 2}[t.va] + (pad if t.va == "bottom" else -pad if t.va == "top"
+                                                                 else 0.0)
+    a = math.radians(t.rotation)
+    c, s = math.cos(a), math.sin(a)
+    return np.array([(t.x + px * c - py * s, t.y + px * s + py * c)
+                     for px, py in ((x0, y0), (x0 + w, y0), (x0 + w, y0 + h), (x0, y0 + h))])
+
+
+def _polygons_overlap(p, q):
+    """Separating-axis test for two convex quadrilaterals."""
+    for poly in (p, q):
+        for i in range(4):
+            edge = poly[(i + 1) % 4] - poly[i]
+            axis = np.array([-edge[1], edge[0]])
+            pp, qq = p @ axis, q @ axis
+            if min(pp.max(), qq.max()) <= max(pp.min(), qq.min()):
+                return False
+    return True
+
+
+def _any_overlap(texts, others, pad=0.0):
+    """True if any of `texts` (padded) overlaps another of `texts` or any of `others`."""
+    polys = [_corners(t, pad) for t in texts] + [_corners(t) for t in others]
+    lo = np.array([p.min(axis=0) for p in polys])
+    hi = np.array([p.max(axis=0) for p in polys])
+    for i in range(len(texts)):
+        near = np.nonzero((lo[i + 1:, 0] < hi[i, 0]) & (hi[i + 1:, 0] > lo[i, 0]) &
+                          (lo[i + 1:, 1] < hi[i, 1]) & (hi[i + 1:, 1] > lo[i, 1]))[0] + i + 1
+        if any(_polygons_overlap(polys[i], polys[j]) for j in near):
+            return True
+    return False
+
+
+def _add_supports(drawing, marks, style, size, dots, dot_size, measure):
+    """Support marks at internal nodes `marks` [(x, y, support)], drawn after the leaf labels: grey numbers
+    (classic) or dots. Numbers that would overlap each other or a leaf label switch the whole figure to dots,
+    with a warning. Returns True when support is drawn as dots."""
+    shown = [(x, y, s) for x, y, s in marks if s is not None and s >= style.support_min]
+    if not dots and shown:
+        texts = []
+        for x, y, support in shown:
+            label = f"{support:.0f}"
+            w, h = measure(label, size * 0.8)
+            texts.append(Text(x - 0.03, y + 0.025, label, size * 0.8, SUPPORT_GREY, "right", "bottom", halo=True,
+                              kind="support", width=w, height=h))
+        if not _any_overlap(texts, [t for t in drawing.texts if t.kind == "leaf"], pad=size * 0.8 * 0.08 / 72):
+            drawing.texts.extend(texts)
+            return False
+        dots = True
+        drawing.warning = " ".join(filter(None, [drawing.warning, SUPPORT_OVERLAP]))
+    for x, y, support in shown:
         face = INK if support >= 95 else "#a8a8a8" if support >= 70 else "white"
         drawing.dots.append((x, y, face, INK, dot_size, f"support {support:.0f}"))
-    else:
-        drawing.texts.append(Text(x - 0.03, y + 0.025, f"{support:.0f}", size * 0.8, SUPPORT_GREY, "right",
-                                  "bottom", halo=True, kind="support"))
+    return dots
+
+
+def _has_supports(geo):
+    return any(nd.support is not None for nd in geo.nodes if not nd.is_leaf)
 
 
 def _scale_bar(drawing, x, y, units_per_inch, size, max_depth):
@@ -154,21 +225,55 @@ def _scale_bar(drawing, x, y, units_per_inch, size, max_depth):
     return x + w
 
 
+LEGEND_Y, LEGEND_MARGIN = 0.25, 0.15
+
+
+def _legend_row(size):
+    return max(0.22, size * 1.6 / 72)
+
+
+def _legend_rows(drawing, x0, y, items, size, measure):
+    """Place legend items [(swatch(x, y), label, text size, text offset, gap)] left to right from (x0, y),
+    starting a new row below whenever an item would cross the right margin. Returns the height used."""
+    row, x, rows = _legend_row(size), x0, 1
+    right = drawing.width - LEGEND_MARGIN
+    for swatch, label, text_size, dx, gap in items:
+        w, h = measure(label, text_size)
+        if x > x0 and x + dx + w > right:
+            x, y, rows = x0, y - row, rows + 1
+        swatch(x, y)
+        drawing.texts.append(Text(x + dx, y, label, text_size, INK, kind="legend", width=w, height=h))
+        x += dx + w + gap
+    return rows * row
+
+
 def _dot_legend(drawing, x, y, size, dot_size, measure):
-    for face, label in ((INK, "≥95"), ("#a8a8a8", "70–94"), ("white", "<70")):
-        drawing.dots.append((x, y, face, INK, dot_size, ""))
-        w, _ = measure(label, size * 0.85)
-        drawing.texts.append(Text(x + 0.07, y, label, size * 0.85, INK, kind="legend", width=w))
-        x += 0.07 + w + 0.15
+    def dot(face):
+        return lambda px, py: drawing.dots.append((px, py, face, INK, dot_size, ""))
+    items = [(dot(face), label, size * 0.85, 0.07, 0.15)
+             for face, label in ((INK, "≥95"), ("#a8a8a8", "70–94"), ("white", "<70"))]
+    return _legend_rows(drawing, x, y, items, size, measure)
 
 
 def _clade_legend(drawing, x, y, names, size, measure):
-    for i, name in enumerate(names):
-        drawing.fills.append(([x, x + 0.1, x + 0.1, x], [y - 0.05, y - 0.05, y + 0.05, y + 0.05],
-                              PALETTE[i % len(PALETTE)], 1.0))
-        w, _ = measure(name, size * 0.9)
-        drawing.texts.append(Text(x + 0.14, y, name, size * 0.9, INK, kind="legend", width=w))
-        x += 0.14 + w + 0.2
+    def swatch(color):
+        return lambda px, py: drawing.fills.append(([px, px + 0.1, px + 0.1, px], [py - 0.05, py - 0.05, py + 0.05,
+                                                                                      py + 0.05], color, 1.0))
+    items = [(swatch(PALETTE[i % len(PALETTE)]), name, size * 0.9, 0.14, 0.2) for i, name in enumerate(names)]
+    return _legend_rows(drawing, x, y, items, size, measure)
+
+
+def _legends(drawing, x, size, dot_size, measure, clade_names=(), dots=False):
+    """Bottom legends from (x, LEGEND_Y): clade names, then the support-dot key on its own row. When they need
+    more than one row, the figure grows and everything above them moves up."""
+    used = 0.0
+    if clade_names:
+        used += _clade_legend(drawing, x, LEGEND_Y, clade_names, size, measure)
+    if dots:
+        used += _dot_legend(drawing, x, LEGEND_Y - used, size, dot_size, measure)
+    extra = used - _legend_row(size)
+    if extra > 1e-9:
+        _shift(drawing, extra)
 
 
 def clade_labels(style, n):
@@ -190,8 +295,10 @@ def place(geo, style):
     else:
         d = _place_unrooted(geo, style, names, measure, show_labels)
     d.family = family
+    d.font_choice = style.font_family
     if not show_labels:
-        d.warning = f"{n} leaves: labels are hidden in the figure (hover in Explore shows names)."
+        d.warning = " ".join(filter(None, [f"{n} leaves: labels are hidden in the figure (hover in Explore shows "
+                                           "names).", d.warning]))
     return d
 
 
@@ -221,7 +328,7 @@ def _place_rectangular(geo, style, names, measure, show_labels):
         height = top + bottom + row * max(n - 1, 1)
     # support numbers need about 1.2 x their own height between rows; otherwise show support as dots
     dots = style.style != "classic" or row < 1.2 * (font * 0.8 * 1.2 / 72)
-    if dots and style.style == "classic" and any(nd.support is not None for nd in geo.nodes if not nd.is_leaf):
+    if dots and style.style == "classic" and _has_supports(geo):
         warning = " ".join(filter(None, [warning, "Rows are too tight for support numbers; support is shown as dots."]))
     sizes = [measure(name, font, style.italic) for name in names] if show_labels else [(0.0, 0.0)] * n
     label_w = (max(w for w, _ in sizes) + 0.08) if show_labels else 0.05
@@ -250,9 +357,6 @@ def _place_rectangular(geo, style, names, measure, show_labels):
         xs, ys = _corner(X(pa), Y(pb), X(ca), Y(cb), radius)
         d.lines.append((xs, ys, _color(clade, style), lw, False))
     dot_size = max(font * 0.55, 3.0)
-    for node in geo.nodes:
-        if not node.is_leaf:
-            _support_marks(d, X(node.a), Y(node.b), node.support, style, font, dots, dot_size)
     for (w, h), leaf, name in zip(sizes, geo.leaves, names):
         x, y = X(leaf.a), Y(leaf.b)
         lx = max_x + 0.06 if aligned else x + 0.06
@@ -268,10 +372,13 @@ def _place_rectangular(geo, style, names, measure, show_labels):
             d.lines.append(([bar_x, bar_x], [y0, y1], PALETTE[g % len(PALETTE)], 3.0, False))
             d.texts.append(Text(bar_x + 0.08, (y0 + y1) / 2, clade_names[g], font, PALETTE[g % len(PALETTE)],
                                 kind="clade"))
+    dots = _add_supports(d, [(X(nd.a), Y(nd.b), nd.support) for nd in geo.nodes if not nd.is_leaf], style, font,
+                         dots, dot_size, measure)
+    bar_end = left
     if geo.has_lengths and not geo.cladogram:
-        _scale_bar(d, left, 0.3, geo.max_depth / span, font, geo.max_depth)
-    if dots and any(nd.support is not None for nd in geo.nodes if not nd.is_leaf):
-        _dot_legend(d, width - 1.6, 0.25, font, dot_size, measure)
+        bar_end = _scale_bar(d, left, 0.3, geo.max_depth / span, font, geo.max_depth)
+    if dots and _has_supports(geo):
+        _legends(d, max(bar_end + 0.4, width - 1.6), font, dot_size, measure, dots=True)
     return d
 
 
@@ -289,7 +396,7 @@ def _place_circular(geo, style, names, measure, show_labels):
     ring = 0.18 if clades else 0.0
     radius = max(needed, 1.0, style.width_cm / 2.54 / 2 - label_w - gap - ring - 0.15)
     half = radius + gap + label_w + ring + 0.15
-    legend_h = 0.45 if (geo.has_lengths and not geo.cladogram) or style.style != "classic" or clades else 0.0
+    legend_h = 0.45 if (geo.has_lengths and not geo.cladogram) or clades or _has_supports(geo) else 0.0
     width, height = 2 * half, 2 * half + legend_h
     cx, cy = half, half + legend_h
     R = lambda depth: depth / geo.max_depth * radius
@@ -317,10 +424,6 @@ def _place_circular(geo, style, names, measure, show_labels):
         (x0, y0), (x1, y1) = P(R(pr), ct), P(R(cr), ct)
         d.lines.append(([x0, x1], [y0, y1], color, lw, False))
     dot_size = max(font * 0.55, 3.0)
-    for node in geo.nodes:
-        if not node.is_leaf:
-            x, y = P(R(node.a), node.b)
-            _support_marks(d, x, y, node.support, style, font, style.style != "classic", dot_size)
     for (w, h), leaf, name in zip(sizes, geo.leaves, names):
         tip = P(R(leaf.a), leaf.b)
         lx, ly = P(radius + gap, leaf.b)
@@ -333,13 +436,13 @@ def _place_circular(geo, style, names, measure, show_labels):
             d.texts.append(Text(lx, ly, name, font, _color(leaf.clade, style), "right" if flip else "left", "center",
                                 rotation=deg - 180 if flip else (deg if deg <= 90 else deg - 360),
                                 italic=style.italic, hover=leaf.name, width=w, height=h))
+    dots = _add_supports(d, [(*P(R(nd.a), nd.b), nd.support) for nd in geo.nodes if not nd.is_leaf], style, font,
+                         style.style != "classic", dot_size, measure)
     bar_end = 0.2
     if geo.has_lengths and not geo.cladogram:
         bar_end = _scale_bar(d, 0.2, 0.3, geo.max_depth / radius, font, geo.max_depth)
-    if clades:
-        _clade_legend(d, max(1.2, bar_end + 0.4), 0.25, clade_labels(style, max(groups) + 1), font, measure)
-    elif style.style != "classic":
-        _dot_legend(d, width - 1.6, 0.25, font, dot_size, measure)
+    _legends(d, max(1.2, bar_end + 0.4), font, dot_size, measure,
+             clade_labels(style, max(groups) + 1) if clades else (), dots and _has_supports(geo))
     return d
 
 
@@ -457,10 +560,6 @@ def _place_unrooted(geo, style, names, measure, show_labels):
         d.lines.append(([x0 * scale + ox, x1 * scale + ox], [y0 * scale + oy, y1 * scale + oy],
                         _color(clade, style), style.line_width, False))
     dot_size = max(font * 0.55, 3.0)
-    for node in geo.nodes:
-        if not node.is_leaf:
-            _support_marks(d, node.a * scale + ox, node.b * scale + oy, node.support, style, font,
-                           style.style != "classic", dot_size)
     if show_labels:
         for (w, h), leaf, name, box, end in zip(sizes, geo.leaves, names, boxes, ends):
             bx0, by0 = box[0] + ox, box[1] + oy
@@ -469,19 +568,43 @@ def _place_unrooted(geo, style, names, measure, show_labels):
                 d.lines.append(([tx, end[0] + ox], [ty, end[1] + oy], LEADER_GREY, 0.6, False))
             d.texts.append(Text(bx0, by0 + h / 2, name, font, _color(leaf.clade, style), "left", "center",
                                 italic=style.italic, hover=leaf.name, width=w, height=h))
+    dots = _add_supports(d, [(nd.a * scale + ox, nd.b * scale + oy, nd.support) for nd in geo.nodes
+                             if not nd.is_leaf], style, font, style.style != "classic", dot_size, measure)
     bar_end = 0.2
     if geo.has_lengths:
         bar_end = _scale_bar(d, 0.2, 0.3, 1 / scale, font, extent)
     groups = _groups(geo)
-    if style.style == "clades" and groups:
-        _clade_legend(d, max(1.2, bar_end + 0.4), 0.25, clade_labels(style, max(groups) + 1), font, measure)
-    elif style.style != "classic":
-        _dot_legend(d, width - 1.6, 0.25, font, dot_size, measure)
+    _legends(d, max(1.2, bar_end + 0.4), font, dot_size, measure,
+             clade_labels(style, max(groups) + 1) if style.style == "clades" and groups else (),
+             dots and _has_supports(geo))
     return d
+
+
+@contextmanager
+def quiet_fonts():
+    """Silence matplotlib's findfont warnings for listed fallback families that are not installed."""
+    logger = logging.getLogger("matplotlib.font_manager")
+    old = logger.level
+    logger.setLevel(logging.ERROR)
+    try:
+        yield
+    finally:
+        logger.setLevel(old)
+
+
+def font_families(drawing):
+    """The requested family first, then its fallbacks: exports name it (SVG text keeps 'Arial', ...) while
+    glyphs come from the first installed one, which is also the font the labels were measured with."""
+    return list(dict.fromkeys([drawing.font_choice, *FONTS.get(drawing.font_choice, ()), drawing.family]))
 
 
 def render_matplotlib(drawing):
     """The publication figure (white background), as a matplotlib Figure without pyplot."""
+    with quiet_fonts():
+        return _render_matplotlib(drawing)
+
+
+def _render_matplotlib(drawing):
     fig = Figure(figsize=(drawing.width, drawing.height), dpi=100, facecolor="white")
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
@@ -496,9 +619,10 @@ def render_matplotlib(drawing):
                 solid_capstyle="round", solid_joinstyle="round", zorder=1)
     for x, y, face, edge, size, _ in drawing.dots:
         ax.scatter([x], [y], s=size ** 2, facecolor=face, edgecolor=edge, linewidth=0.8, zorder=3)
+    families = font_families(drawing)
     for t in drawing.texts:  # halo as a white box: path effects would export support numbers as outlines
         ax.text(t.x, t.y, t.text, fontsize=t.size, color=t.color, ha=t.ha, va=t.va, rotation=t.rotation,
-                rotation_mode="anchor", family=drawing.family, style="italic" if t.italic else "normal",
+                rotation_mode="anchor", family=families, style="italic" if t.italic else "normal",
                 bbox=dict(boxstyle="round,pad=0.08", facecolor="white", edgecolor="none") if t.halo else None,
                 gid=t.kind, zorder=4)
     return fig
@@ -509,7 +633,7 @@ def export_bytes(fig, fmt):
     if fmt not in EXPORT_FORMATS:
         raise ValueError(f"Unknown export format {fmt!r}")
     buf = BytesIO()
-    with matplotlib.rc_context({"svg.fonttype": "none", "pdf.fonttype": 42}):
+    with matplotlib.rc_context({"svg.fonttype": "none", "pdf.fonttype": 42}), quiet_fonts():
         fig.savefig(buf, format=fmt, dpi=600 if fmt == "png" else 100, facecolor="white", bbox_inches="tight",
                     pad_inches=0.05)
     return buf.getvalue()
@@ -527,8 +651,7 @@ def _text_center(t):
 def render_plotly(drawing, dark=False):
     """Interactive view of the same drawing: hover on leaves and nodes, zoom and pan."""
     px_per_in = 96
-    ink_swap = {INK: "#ece8df", SUPPORT_GREY: "#a59f91"} if dark else {}
-    recolor = lambda c: ink_swap.get(c, c)
+    recolor = (lambda c: NIGHT_COLOURS.get(c, c)) if dark else (lambda c: c)
     fig = go.Figure()
     shapes = [dict(type="path", path="M " + " L ".join(f"{x},{y}" for x, y in zip(xs, ys)) + " Z",
                    fillcolor=color, opacity=alpha, line=dict(width=0), layer="below")
@@ -543,7 +666,7 @@ def render_plotly(drawing, dark=False):
                                  line=dict(color=color, width=width * 1.3, dash="dot" if dashed else "solid")))
     if drawing.dots:
         fig.add_trace(go.Scatter(x=[d[0] for d in drawing.dots], y=[d[1] for d in drawing.dots], mode="markers",
-                                 marker=dict(color=[d[2] for d in drawing.dots], size=[d[4] * 1.3 for d in drawing.dots],
+                                 marker=dict(color=[recolor(d[2]) for d in drawing.dots], size=[d[4] * 1.3 for d in drawing.dots],
                                              line=dict(color=[recolor(d[3]) for d in drawing.dots], width=1)),
                                  text=[d[5] for d in drawing.dots], hovertemplate="%{text}<extra></extra>",
                                  showlegend=False))

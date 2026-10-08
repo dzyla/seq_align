@@ -202,3 +202,15 @@ def test_tree_outputs_handle_deep_caterpillar_tree():
         newick = tree_to_newick(tree)
     out = tree_figure_outputs(newick, "rectangular", False, "as_built", (), False, 3, _style_items())
     assert sum(t.kind == "leaf" for t in out["drawing"].texts) == 300
+
+
+def test_tree_preview_matches_export_framing():
+    import re
+    from io import BytesIO
+    from PIL import Image
+    from modules.phylogeny import tree_figure_outputs
+    items = tuple((k, "clades" if k == "style" else v) for k, v in _style_items())
+    out = tree_figure_outputs(GLOBIN_NEWICK, "circular", False, "midpoint", (), True, 3, items)
+    w, h = Image.open(BytesIO(out["preview"])).size
+    svg_w, svg_h = (float(v) for v in re.search(rb'width="([\d.]+)pt" height="([\d.]+)pt"', out["svg"]).groups())
+    assert w / 150 == pytest.approx(svg_w / 72, abs=0.03) and h / 150 == pytest.approx(svg_h / 72, abs=0.03)
