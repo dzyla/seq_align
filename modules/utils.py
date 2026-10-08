@@ -55,6 +55,7 @@ def init_session_state():
         "input_key": None,
         "input_cache": None,
         "structures": {},
+        "extra_structures": {},
         "fetched": None,
     }
     for key, value in defaults.items():

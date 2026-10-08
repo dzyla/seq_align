@@ -6,6 +6,8 @@ import molviewspec as mvs
 import streamlit as st
 from molviewspec import ComponentExpression
 
+from modules.fetch import FetchError, fetch_alphafold_structure, fetch_pdb_structure
+from modules.pdb_renumber import align_target_to_chain, get_mapping_from_alignment
 from modules.structures import StructureFile, chain_residue_table, parse_structure
 
 MOLSTAR_VERSION = "5.10.1"
@@ -125,3 +127,75 @@ def structure_viewer_section(structures):
                    unsafe_allow_html=True)
     render_molstar(sf, builder)
     st.caption(f"{len(table)} protein chain(s): " + ", ".join(f"{c} ({len(r)} residues)" for c, r in table.items()))
+
+
+def map_sequence_to_structure(ref_seq, residues):
+    """Align a reference sequence to a chain; map 1-based reference positions to residues."""
+    chain_seq = "".join(r.aa for r in residues)
+    aligned_t, aligned_c, identity = align_target_to_chain(ref_seq, chain_seq)
+    mapping = get_mapping_from_alignment(aligned_t, aligned_c)   # chain index -> ref position
+    return {ref_pos: residues[idx] for idx, ref_pos in mapping.items()}, identity
+
+
+def rank_chains(ref_seq, table):
+    scores = [(chain_id, map_sequence_to_structure(ref_seq, rows)[1]) for chain_id, rows in table.items()]
+    return sorted(scores, key=lambda item: item[1], reverse=True)
+
+
+def position_highlights(position_colors, pos_map):
+    highlights, unmapped = [], []
+    for pos, (color, label) in sorted(position_colors.items()):
+        res = pos_map.get(pos)
+        if res is None:
+            unmapped.append(pos)
+        else:
+            highlights.append(Highlight(ResidueRef(res.chain, res.number, res.icode), color, label))
+    return highlights, unmapped
+
+
+def available_structures():
+    return {**st.session_state.get("structures", {}), **st.session_state.get("extra_structures", {})}
+
+
+def _add_structure_controls(key):
+    c1, c2 = st.columns(2)
+    upload = c1.file_uploader("Add a structure", type=["pdb", "ent", "cif", "mmcif"], key=f"{key}_upload")
+    if upload is not None:
+        fmt = "mmCIF" if upload.name.lower().endswith(("cif", "mmcif")) else "PDB"
+        sf = StructureFile(name=upload.name, data=upload.getvalue(), fmt=fmt)
+        st.session_state.extra_structures = {**st.session_state.get("extra_structures", {}), sf.name: sf}
+    ident = c2.text_input("…or fetch: PDB ID or UniProt accession (AlphaFold)", key=f"{key}_fetch_id")
+    if c2.button("Fetch structure", key=f"{key}_fetch_btn") and ident.strip():
+        ident = ident.strip().upper()
+        try:
+            sf = fetch_pdb_structure(ident) if len(ident) == 4 else fetch_alphafold_structure(ident)
+            st.session_state.extra_structures = {**st.session_state.get("extra_structures", {}), sf.name: sf}
+        except FetchError as e:
+            st.error(str(e))
+
+
+def structure_highlight_panel(ref_seq, position_colors, key, title="🧊 Show on structure (Mol*)"):
+    """Color reference positions on a structure; `position_colors` maps position -> (hex color, label)."""
+    with st.expander(title):
+        _add_structure_controls(key)
+        structures = available_structures()
+        if not structures:
+            st.caption("Load, upload or fetch a structure to view these positions in 3D.")
+            return
+        name = st.selectbox("Structure", list(structures), key=f"{key}_structure")
+        sf = structures[name]
+        table = cached_residue_table(sf.data, sf.fmt, sf.name)
+        if not table:
+            st.warning("No protein chains in this structure.")
+            return
+        ranked = rank_chains(ref_seq, table)
+        chain_id = st.selectbox("Chain", [c for c, _ in ranked], key=f"{key}_chain",
+                                format_func=lambda c: f"{c} ({dict(ranked)[c]:.1%} identity)")
+        pos_map, identity = map_sequence_to_structure(ref_seq, table[chain_id])
+        highlights, unmapped = position_highlights(position_colors, pos_map)
+        st.caption(f"Reference aligned to chain {chain_id}: {identity:.1%} identity; "
+                   f"{len(highlights)} of {len(position_colors)} positions shown.")
+        if unmapped:
+            st.caption(f"Not modelled in this chain: {', '.join(map(str, unmapped[:30]))}"
+                       + (" …" if len(unmapped) > 30 else ""))
+        render_molstar(sf, build_view_state(sf, list(table), color_mode="uniform", highlights=highlights))

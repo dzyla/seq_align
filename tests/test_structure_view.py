@@ -71,3 +71,30 @@ def test_plddt_bins():
 def test_bfactor_highlights_cover_all_residues():
     table = chain_residue_table(parse_structure(PDB_SF))
     assert len(bfactor_highlights(table)) == 46
+
+
+from modules.structure_view import map_sequence_to_structure, position_highlights, rank_chains
+
+CRAMBIN = "TTCCPSIVARSNFNVCRLPGTPEAICATYTGCIIIPGATCPGDYAN"
+
+
+def test_map_sequence_to_structure_with_mutation():
+    table = chain_residue_table(parse_structure(PDB_SF))
+    mutant = CRAMBIN[:8] + "W" + CRAMBIN[9:]
+    pos_map, identity = map_sequence_to_structure(mutant, table["A"])
+    assert pos_map[9].number == 9 and pos_map[9].aa == "A"
+    assert identity > 0.95
+
+
+def test_rank_chains():
+    table = chain_residue_table(parse_structure(PDB_SF))
+    assert rank_chains(CRAMBIN, table)[0][0] == "A"
+
+
+def test_unmapped_positions_reported():
+    table = chain_residue_table(parse_structure(PDB_SF))
+    extended = "MKKLLL" + CRAMBIN          # 6 extra N-terminal residues absent from the structure
+    pos_map, _ = map_sequence_to_structure(extended, table["A"])
+    highlights, unmapped = position_highlights({2: ("#ff0000", "K2R"), 15: ("#ff0000", "A15W")}, pos_map)
+    assert unmapped == [2]
+    assert highlights[0].residue.number == 9 and highlights[0].label == "A15W"

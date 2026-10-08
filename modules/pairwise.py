@@ -192,6 +192,14 @@ def pairwise_alignment_section(sequences, seq_type):
                            file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv", mime="text/csv",
                            on_click="ignore")
 
+    if seq_type == "Protein" and result.mutations:
+        from modules.structure_view import structure_highlight_panel  # local: avoids a circular import
+        structure_highlight_panel(
+            clean_sequence(seq1.seq, "Protein"),
+            {int(re.search(r"\d+", m).group()): ("#d62728", m) for m in result.mutations},
+            key="pairwise_3d",
+        )
+
     st.download_button(label="📥 Download Alignment", data=alignment_text,
                        file_name=f"pairwise_alignment_{reference_id}_vs_{target_id}.txt", mime="text/plain",
                        on_click="ignore")

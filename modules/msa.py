@@ -11,6 +11,7 @@ from typing import List, Dict, Tuple
 from modules.utils import have_params_changed, stale_notice
 from modules.viz import alignment_to_codes, plot_msa
 from modules.seqtools import clean_sequence, fingerprint
+from modules.structure_view import structure_highlight_panel
 from modules.phylogeny import TREE_METHODS, TreeError, build_tree_from_alignment, phylogenetic_tree_section
 
 def msa_section(sequences, seq_type):
@@ -101,6 +102,13 @@ def msa_section(sequences, seq_type):
             if csv_mutations:
                 st.download_button(label="📥 Download All Mutations (CSV)", data=csv_mutations,
                                    file_name="msa_mutations.csv", mime="text/csv", on_click="ignore")
+            if seq_type == "Protein":
+                mutated = [s for s in seq_ids if mutations.get(s)]
+                if mutated:
+                    show_id = st.selectbox("Sequence to show on structure", mutated, key="msa_3d_seq")
+                    ref_seq = clean_sequence(next(s.seq for s in sequences if s.id == ref_seq_id), "Protein")
+                    structure_highlight_panel(
+                        ref_seq, {p: ("#d62728", f"{r}{p}{v}") for p, r, v in mutations[show_id]}, key="msa_3d")
         else:
             st.write("No point mutations detected relative to the reference sequence.")
 
