@@ -1,13 +1,20 @@
 streamlit==1.60.0
-biopython==1.84
-numpy==1.26.4
-pandas==2.2.3
+biopython==1.84; python_version < "3.13"
+biopython==1.86; python_version >= "3.13"
+numpy==1.26.4; python_version < "3.13"
+numpy==2.3.5; python_version >= "3.13"
+pandas==2.2.3; python_version < "3.13"
+pandas==2.3.3; python_version >= "3.13"
 plotly==5.24.1
-matplotlib==3.9.2
-scipy==1.14.1
+matplotlib==3.9.2; python_version < "3.13"
+matplotlib==3.10.7; python_version >= "3.13"
+scipy==1.14.1; python_version < "3.13"
+scipy==1.16.3; python_version >= "3.13"
 scikit-learn==1.8.0
-# pyFAMSA wheel is pinned for compatibility on hosted servers
-pyfamsa==0.3.2
+# pyFAMSA 0.3.2 is the tested pin on Python 3.12; 3.13+ (if the host forces it) gets the oldest wheels that exist
+pyfamsa==0.3.2; python_version < "3.13"
+pyfamsa==0.5.3; python_version == "3.13"
+pyfamsa==0.7.0; python_version >= "3.14"
 molviewspec==1.8.1
 requests==2.32.3
 logomaker==0.8.7

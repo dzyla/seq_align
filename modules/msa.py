@@ -9,7 +9,8 @@ from Bio import AlignIO, SeqIO
 from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-import multiprocessing
+import json
+import sys
 from io import StringIO
 from collections import Counter
 import pandas as pd
@@ -339,42 +340,27 @@ FAMSA_CRASH_MESSAGE = ("FAMSA crashed on this input (this happens when a sequenc
                        "the others). Try MAFFT or check the input.")
 
 
-def _famsa_child(conn, pairs):
-    try:
-        from modules.famsa_worker import align
-        conn.send(("ok", align(pairs)))
-    except Exception as e:  # reported to the parent as text
-        conn.send(("error", str(e)))
-    finally:
-        conn.close()
+FAMSA_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "famsa_worker.py")
 
 
 def run_famsa(pairs):
-    """Run pyFAMSA in a spawned child process: it can abort the interpreter, which try/except cannot catch."""
-    ctx = multiprocessing.get_context("spawn")
-    parent_conn, child_conn = ctx.Pipe(duplex=False)
-    proc = ctx.Process(target=_famsa_child, args=(child_conn, list(pairs)), daemon=True)
-    proc.start()
-    child_conn.close()
-    message = None
+    """Run pyFAMSA in a separate Python process: it can abort the interpreter, which try/except cannot catch.
+
+    The worker is started by file path (not multiprocessing), so the Streamlit page script, which runs as an
+    unguarded __main__, is never re-executed in the child.
+    """
+    request = json.dumps({"pairs": [list(p) for p in pairs]})
     try:
-        if parent_conn.poll(FAMSA_TIMEOUT):
-            try:
-                message = parent_conn.recv()
-            except EOFError:
-                message = None
-    finally:
-        parent_conn.close()
-        proc.join(5)
-        if proc.is_alive():
-            proc.kill()
-            proc.join()
-    if message is None:
+        done = subprocess.run([sys.executable, FAMSA_WORKER], input=request, capture_output=True,
+                              text=True, timeout=FAMSA_TIMEOUT)
+    except subprocess.TimeoutExpired as e:
+        raise MSAError(f"FAMSA did not finish within {FAMSA_TIMEOUT} s. Try MAFFT or fewer sequences.") from e
+    if done.returncode < 0 or done.returncode in (134, 139):  # killed by a signal: native crash
         raise MSAError(FAMSA_CRASH_MESSAGE)
-    status, payload = message
-    if status == "error":
-        raise MSAError(f"FAMSA failed: {payload}")
-    return payload
+    if done.returncode != 0:
+        detail = (done.stderr.strip().splitlines() or ["unknown error"])[-1]
+        raise MSAError(f"FAMSA failed: {detail}")
+    return [tuple(p) for p in json.loads(done.stdout)]
 
 
 def trim_columns(aligned_pairs, max_gap_fraction):

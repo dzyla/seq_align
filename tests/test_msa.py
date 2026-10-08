@@ -118,3 +118,26 @@ def test_famsa_crash_inputs_do_not_kill_the_process(pairs):
 def test_famsa_keeps_input_ids():
     aligned = run_msa([("seq one", "MKVLAAGIVG"), ("seq_two", "MKVLAGIVG")], "Protein")
     assert [i for i, _ in aligned] == ["seq one", "seq_two"]
+
+
+def test_famsa_works_from_an_unguarded_main_script(tmp_path):
+    # `streamlit run app.py` executes the page as an unguarded __main__; FAMSA isolation must not re-run it.
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    script = tmp_path / "page.py"
+    script.write_text(
+        f"import sys\nsys.path.insert(0, {str(repo)!r})\n"
+        "from modules.msa import run_msa\n"
+        "print(run_msa([('a', 'MKVLAAGIVGLL'), ('b', 'MKVLAGIVGLL')], 'Protein'))\n"
+    )
+    done = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert "('a', 'MKVLAAGIVGLL')" in done.stdout
+
+
+def test_famsa_crash_is_reported_as_crash():
+    with pytest.raises(MSAError, match="crashed"):
+        run_msa([("a", "AAAA"), ("b", "WWWW")], "Protein")
