@@ -209,7 +209,7 @@ def main():
             else:
                 st.warning("Translation is only available for DNA sequences. Please select DNA as sequence type.")
         elif alignment_mode == "Convert Formats":
-            format_conversion_section(sequences, input_format)
+            format_conversion_section(sequences, input_format, seq_type)
         elif alignment_mode == "PDB Residue Renumbering":
             pdb_renumber_section(uploaded_file, input_format)
         elif alignment_mode == "Phylogenetic Tree":
