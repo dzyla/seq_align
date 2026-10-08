@@ -5,6 +5,7 @@ import pandas as pd
 from Bio.Seq import Seq
 
 from modules.seqtools import clean_sequence
+from modules.utils import stale_notice
 
 CODON_TABLES = {
     "1 Standard": 1,
@@ -59,26 +60,30 @@ def dna_translation_section(sequences):
 
     st.markdown("### 🕵️ ORF Finder")
     min_len = st.number_input("Minimum ORF Length (AA)", value=30, min_value=10, step=5)
+    params = {"id": selected_seq.id, "seq": str(selected_seq.seq), "min_len": min_len, "table": table}
 
-    if st.button("Find ORFs"):
-        orfs = find_orfs(str(selected_seq.seq), min_len=min_len, table=table)
+    if st.button("Find ORFs", key="find_orfs"):
+        st.session_state.orf_results = {
+            "params": params, "orfs": find_orfs(str(selected_seq.seq), min_len=min_len, table=table)}
 
-        if orfs:
-            st.success(f"Found {len(orfs)} ORFs.")
-            df = pd.DataFrame(orfs)
-            st.dataframe(df)
-
-            # Download
-            csv = df.to_csv(index=False)
-            st.download_button("Download ORFs (CSV)", csv, "orfs.csv", "text/csv")
-
-            # Detailed view
-            st.subheader("ORF Sequences")
-            for index, row in df.iterrows():
-                with st.expander(f"Frame {row['Frame']}, {row['Start (nt)']}–{row['End (nt)']} nt, {row['Length (AA)']} aa"):
-                    st.code(row['Sequence'])
-        else:
-            st.warning("No ORFs found with current settings.")
+    stored = st.session_state.get("orf_results")
+    if not stored:
+        return
+    if stored["params"] != params:
+        stale_notice()
+        return
+    orfs = stored["orfs"]
+    if not orfs:
+        st.warning("No ORFs found with current settings.")
+        return
+    st.success(f"Found {len(orfs)} ORFs.")
+    df = pd.DataFrame(orfs)
+    st.dataframe(df)
+    st.download_button("Download ORFs (CSV)", df.to_csv(index=False), "orfs.csv", "text/csv", on_click="ignore")
+    st.subheader("ORF Sequences")
+    for _, row in df.iterrows():
+        with st.expander(f"Frame {row['Frame']}, {row['Start (nt)']}–{row['End (nt)']} nt, {row['Length (AA)']} aa"):
+            st.code(row['Sequence'])
 
 
 def find_orfs(sequence, min_len=30, table=1):

@@ -79,7 +79,7 @@ def msa_section(sequences, seq_type):
         plot_msa(alignment_to_codes([s for _, s in aligned]), [i for i, _ in aligned], plot_method, seq_type)
         try:
             st.download_button(label="📥 Download MSA", data=serialize_alignment(aligned, msa_output_format),
-                               file_name=f"msa_alignment.{msa_output_format}", mime="text/plain")
+                               file_name=f"msa_alignment.{msa_output_format}", mime="text/plain", on_click="ignore")
         except MSAError as e:
             st.error(str(e))
 
@@ -100,7 +100,7 @@ def msa_section(sequences, seq_type):
             csv_mutations = convert_msa_mutations_to_csv(mutations)
             if csv_mutations:
                 st.download_button(label="📥 Download All Mutations (CSV)", data=csv_mutations,
-                                   file_name="msa_mutations.csv", mime="text/csv")
+                                   file_name="msa_mutations.csv", mime="text/csv", on_click="ignore")
         else:
             st.write("No point mutations detected relative to the reference sequence.")
 
@@ -132,7 +132,7 @@ def msa_section(sequences, seq_type):
                 label="📥 Download Consensus/Representative (FASTA)",
                 data=(f">{data['consensus_record'].id}\n{data['consensus_record'].seq}\n"
                       f">{data['closest_record'].id}\n{data['closest_record'].seq}\n"),
-                file_name="consensus_representative.fasta", mime="text/plain")
+                file_name="consensus_representative.fasta", mime="text/plain", on_click="ignore")
 
     with tabs[-1]:
         st.subheader("🌳 Phylogenetic Tree from MSA")

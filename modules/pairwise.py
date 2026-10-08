@@ -6,7 +6,7 @@ from Bio.Align import substitution_matrices
 from io import StringIO
 import logging
 import re
-from modules.utils import have_params_changed
+from modules.utils import have_params_changed, stale_notice
 from modules.seqtools import clean_sequence
 from functools import lru_cache
 from dataclasses import dataclass, field
@@ -39,6 +39,7 @@ def pairwise_alignment_section(sequences, seq_type):
     align_mode = st.selectbox(
         "Select Alignment Mode",
         ("Global", "Local", "Overlap"),
+        key="pairwise_mode",
         help="Global: Align entire sequences. Local: Find best local regions. Overlap: Allow end gaps."
     )
 
@@ -159,7 +160,10 @@ def pairwise_alignment_section(sequences, seq_type):
                 return
 
     result = st.session_state.get('pairwise_result')
-    if result is None or (params_changed and not run_alignment):
+    if result is None:
+        return
+    if params_changed and not run_alignment:
+        stale_notice()
         return
 
     alignment_text = format_result_text(result)
@@ -197,8 +201,7 @@ def pairwise_alignment_section(sequences, seq_type):
                 label="📥 Download Mutations (CSV)",
                 data=csv_mutations,
                 file_name=f"pairwise_mutations_{reference_id}_vs_{target_id}.csv",
-                mime="text/csv"
-            )
+                mime="text/csv", on_click="ignore")
     else:
         st.write("No point mutations detected.")
 
@@ -206,8 +209,7 @@ def pairwise_alignment_section(sequences, seq_type):
         label="📥 Download Alignment",
         data=alignment_text,
         file_name=f"pairwise_alignment_{reference_id}_vs_{target_id}.txt",
-        mime="text/plain"
-    )
+        mime="text/plain", on_click="ignore")
 
 def get_aligner(seq_type, mode="global", open_gap_score=DEFAULT_OPEN_GAP, extend_gap_score=DEFAULT_EXTEND_GAP):
     """

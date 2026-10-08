@@ -221,8 +221,7 @@ def sequence_clustering_section(sequences, seq_type):
                 "📥 Download Clusters (CSV)",
                 df_clusters.to_csv(index=False),
                 "clusters.csv",
-                "text/csv"
-            )
+                "text/csv", on_click="ignore")
 
             # ZIP Export for clusters with size >= 2
             valid_clusters = [c for c in clusters if len(c) >= 2]
@@ -249,8 +248,7 @@ def sequence_clustering_section(sequences, seq_type):
                     data=zip_buffer.getvalue(),
                     file_name="clusters.zip",
                     mime="application/zip",
-                    help="Download clusters with 2 or more sequences as individual FASTA files."
-                )
+                    help="Download clusters with 2 or more sequences as individual FASTA files.", on_click="ignore")
             else:
                  st.info("No clusters with 2 or more sequences to export.")
 

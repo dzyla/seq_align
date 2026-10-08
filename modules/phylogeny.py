@@ -66,7 +66,7 @@ def phylogenetic_tree_section(tree):
         fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
         buf.seek(0)
         st.download_button(label="📥 Download Tree Image (PNG)", data=buf,
-                           file_name="phylogenetic_tree.png", mime="image/png")
+                           file_name="phylogenetic_tree.png", mime="image/png", on_click="ignore")
     except Exception as e:
         st.error(f"Could not draw the tree graphically: {e}")
         st.info("Displaying ASCII version of the tree instead.")
@@ -81,7 +81,7 @@ def phylogenetic_tree_section(tree):
     newick = tree_to_newick(tree)
     st.code(newick)
     st.download_button(label="📥 Download Newick File", data=newick, file_name="phylogenetic_tree.nwk",
-                       mime="text/plain")
+                       mime="text/plain", on_click="ignore")
 
 
 def tree_to_newick(tree):

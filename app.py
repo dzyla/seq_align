@@ -171,7 +171,7 @@ def main():
         st.text_area("FASTA Sequences", value=fasta_str, height=500)
         stem = next(iter(structures.values())).stem if len(structures) == 1 else "extracted"
         st.download_button(label="📥 Download FASTA", data=fasta_str, file_name=f"{stem}_sequences.fasta",
-                           mime="text/plain")
+                           mime="text/plain", on_click="ignore")
     elif alignment_mode == "Pairwise":
         pairwise_alignment_section(sequences, seq_type)
     elif alignment_mode == "MSA":

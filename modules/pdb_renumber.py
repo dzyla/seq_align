@@ -256,5 +256,4 @@ def pdb_renumber_section(structures):
             label=f"📥 Download Renumbered {structure_file.fmt}",
             data=content,
             file_name=f"{structure_file.stem}_renumbered{ext}",
-            mime="chemical/x-mmcif" if is_cif else "chemical/x-pdb",
-        )
+            mime="chemical/x-mmcif" if is_cif else "chemical/x-pdb", on_click="ignore")

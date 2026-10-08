@@ -5,7 +5,7 @@ from Bio.SeqRecord import SeqRecord
 from io import StringIO
 
 from modules.msa import MSAError, run_msa
-from modules.utils import have_params_changed
+from modules.utils import have_params_changed, stale_notice
 
 OUTPUT_FORMATS = ("fasta", "clustal", "phylip-relaxed", "stockholm", "nexus", "embl", "genbank")
 ALIGNMENT_FORMATS = {"clustal", "phylip-relaxed", "stockholm", "nexus"}
@@ -74,6 +74,8 @@ def format_conversion_section(sequences, input_format, seq_type="Protein"):
         params_changed = False
 
     if params_changed:
+        if st.session_state.get('converted_data') or st.session_state.get('conversion_error'):
+            stale_notice()
         return
     if st.session_state.get('converted_data'):
         st.success("Format conversion successful.")
@@ -82,7 +84,6 @@ def format_conversion_section(sequences, input_format, seq_type="Protein"):
             label="📥 Download Converted File",
             data=st.session_state.converted_data,
             file_name=f"converted_sequences.{FILE_EXTENSIONS[output_format]}",
-            mime="text/plain",
-        )
+            mime="text/plain", on_click="ignore")
     elif st.session_state.get('conversion_error'):
         st.error(f"Format conversion failed: {st.session_state.conversion_error}")

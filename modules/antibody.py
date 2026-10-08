@@ -154,7 +154,7 @@ def antibody_prediction_section(sequences):
         st.caption(f"CDR definitions are not available for the {scheme} scheme; showing numbering only.")
         st.dataframe(df)
 
-    st.download_button("Download CSV", df.to_csv(index=False), "antibody_domains.csv", "text/csv")
+    st.download_button("Download CSV", df.to_csv(index=False), "antibody_domains.csv", "text/csv", on_click="ignore")
 
     st.subheader("Detailed Domain View")
     for _, row in df.iterrows():

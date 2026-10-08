@@ -6,6 +6,7 @@ from modules.pairwise import (
     DEFAULT_EXTEND_GAP, DEFAULT_OPEN_GAP, AlignmentError, align_pair, format_result_text, get_aligner,
 )
 from modules.seqtools import clean_sequence
+from modules.utils import stale_notice
 
 SORT_OPTIONS = {
     "Relative Score": "Score as a fraction of the reference's self-alignment score (comparable across queries)",
@@ -100,6 +101,10 @@ def best_match_finder_section(sequences, seq_type):
     run_analysis = st.button("Find Best Match")
 
     params_changed = st.session_state.best_match_params != current_params
+
+    if st.session_state.best_match_results is not None and params_changed and not run_analysis:
+        stale_notice()
+        return
 
     if run_analysis or (st.session_state.best_match_results is not None and not params_changed):
         if run_analysis or params_changed:
@@ -213,8 +218,7 @@ def best_match_finder_section(sequences, seq_type):
             label="📥 Download Results (CSV)",
             data=csv,
             file_name="best_match_results.csv",
-            mime="text/csv"
-        )
+            mime="text/csv", on_click="ignore")
 
 def identity_and_coverage(aligned_ref, aligned_query, ref_length):
     """Percent identity over aligned columns and percent of the reference covered."""

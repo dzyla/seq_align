@@ -59,3 +59,22 @@ def test_tree_built_only_on_button_and_reset_with_dataset():
     assert at.session_state["tree_result"] is not None
     at.text_area(key="fasta_text").input(FASTA_B).run()
     assert at.session_state["tree_result"] is None
+
+
+DNA = ">g\n" + "ATG" + "GCC" * 40 + "TAA" + "\n>h\nATGAAACCCGGGTTTTAA\n"
+
+
+def test_orf_results_survive_rerun():
+    at = load(DNA)
+    at.selectbox(key="seq_type_select").select("DNA").run()
+    at.selectbox(key="analysis_select").select("Translate DNA").run()
+    at.button(key="find_orfs").click().run()
+    assert len(at.dataframe) == 1
+    at.run()                                   # any rerun, e.g. from another widget
+    assert len(at.dataframe) == 1
+
+
+def test_pairwise_shows_stale_notice_after_param_change():
+    at = run_pairwise(load(FASTA_A))
+    at.selectbox(key="pairwise_mode").select("Local").run()
+    assert any("Settings changed" in i.value for i in at.info)
