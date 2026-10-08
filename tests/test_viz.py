@@ -51,3 +51,20 @@ def test_plotly_figure_has_no_hover_text_when_disabled():
     codes = alignment_to_codes(["MK", "ML"])
     assert msa_figure_plotly(codes, ["a", "b"], "Protein", hover=False).data[0].text is None
     assert msa_figure_plotly(codes, ["a", "b"], "Protein", hover=True).data[0].text is not None
+
+
+def test_matplotlib_xticks_are_one_based():
+    codes = alignment_to_codes(["ACDEFGHIKL"])
+    fig = msa_figure_matplotlib(codes, ["a"], "Protein")
+    assert tuple(fig.axes[0].images[0].get_extent()) == (0.5, 10.5, 0.5, -0.5)
+    plt.close(fig)
+
+
+def test_matplotlib_legend_is_compact_and_figure_is_tall_enough():
+    seqs = ["MKVLAAGIVG--KRDEST", "MKVLA-GIVGWWKRDEST", "MRVLSAGLVA--HYNQCP"]
+    codes = alignment_to_codes(seqs)
+    fig = msa_figure_matplotlib(codes, ["a", "b", "c"], "Protein")
+    legend = fig.axes[0].get_legend()
+    assert len(legend.get_texts()) < len(np.unique(codes))
+    assert fig.get_size_inches()[1] >= 3.5
+    plt.close(fig)

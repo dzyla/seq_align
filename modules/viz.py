@@ -90,8 +90,11 @@ def msa_figure_plotly(codes, ids, seq_type, hover=True):
 def msa_figure_matplotlib(codes, ids, seq_type):
     colors = palette(seq_type)
     k = len(colors)
-    fig, ax = plt.subplots(figsize=(20, max(3, min(30, 0.25 * len(ids) + 2))))
-    ax.imshow(codes, cmap=ListedColormap(colors), vmin=-0.5, vmax=k - 0.5, aspect="auto", interpolation="nearest")
+    n_rows, n_cols = codes.shape
+    fig, ax = plt.subplots(figsize=(20, max(3.5, min(30, 0.25 * len(ids) + 2))))
+    # extent makes column k (1-based) sit at x=k, matching the Plotly view.
+    ax.imshow(codes, cmap=ListedColormap(colors), vmin=-0.5, vmax=k - 0.5, aspect="auto",
+              interpolation="nearest", extent=(0.5, n_cols + 0.5, n_rows - 0.5, -0.5))
     ax.set_title("Multiple Sequence Alignment", fontsize=14)
     ax.set_xlabel("Alignment position", fontsize=12)
     if len(ids) <= 60:
@@ -99,8 +102,13 @@ def msa_figure_matplotlib(codes, ids, seq_type):
         ax.set_yticklabels(ids, fontsize=8)
     else:
         ax.set_ylabel("Sequence", fontsize=12)
-    handles = [mpatches.Patch(facecolor=colors[c], edgecolor="#999999", label=ALPHABET[c])
-               for c in np.unique(codes)]
+    # One legend entry per distinct color, labelled with the residues that share it.
+    groups = {}
+    for c in np.unique(codes):
+        groups.setdefault(colors[c], []).append(ALPHABET[c])
+    handles = [mpatches.Patch(facecolor=color, edgecolor="#999999",
+                              label="gap" if letters == ["-"] else "".join(letters))
+               for color, letters in groups.items()]
     ax.legend(handles=handles, title="Residues", bbox_to_anchor=(1.01, 1), loc="upper left", borderaxespad=0.)
     fig.tight_layout()
     return fig
