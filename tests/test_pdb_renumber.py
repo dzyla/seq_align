@@ -49,5 +49,68 @@ END
         self.assertEqual(res_list[1].id[1], 3)
         self.assertEqual(res_list[2].id[1], 4)
 
+import io as _io
+
+from Bio.PDB import PDBParser as _PDBParser
+
+from modules.pdb_renumber import extract_header_records, plan_residue_numbers
+
+
+def _pdb(residues, chain="A"):
+    lines = []
+    for serial, (record, resname, num, icode) in enumerate(residues, 1):
+        lines.append(f"{record:<6}{serial:>5}  CA  {resname:>3} {chain}{num:>4}{icode:1}   "
+                     f"{serial * 3.8:8.3f}{0.0:8.3f}{0.0:8.3f}  1.00  0.00           C")
+    return "\n".join(lines) + "\nEND\n"
+
+
+def _structure(text):
+    return _PDBParser(QUIET=True).get_structure("t", _io.StringIO(text))
+
+
+class TestRenumberingPlan(unittest.TestCase):
+    def test_no_duplicates_when_unmapped_tail_follows(self):
+        self.assertEqual(plan_residue_numbers(6, {0: 4, 1: 5, 2: 6}),
+                         [(4, ' '), (5, ' '), (6, ' '), (7, ' '), (8, ' '), (9, ' ')])
+
+    def test_internal_insertion_gets_insertion_code(self):
+        self.assertEqual(plan_residue_numbers(4, {0: 1, 1: 2, 3: 3}),
+                         [(1, ' '), (2, ' '), (2, 'A'), (3, ' ')])
+
+    def test_n_terminal_overhang_counts_down(self):
+        self.assertEqual(plan_residue_numbers(4, {2: 1, 3: 2}),
+                         [(-1, ' '), (0, ' '), (1, ' '), (2, ' ')])
+
+    def test_insertion_codes_reset_and_assigned(self):
+        # Chain numbered with Kabat-style insertion codes; target equals the chain sequence.
+        residues = [("ATOM", "ALA", 52, " "), ("ATOM", "CYS", 52, "A"), ("ATOM", "GLY", 53, " ")]
+        structure = _structure(_pdb(residues))
+        mappings, _, _ = prepare_renumbering(structure, [SeqRecord(Seq("ACG"), id="t")])
+        out = apply_renumbering(structure, mappings)
+        self.assertEqual([r.id[1:] for r in out[0]["A"]], [(1, ' '), (2, ' '), (3, ' ')])
+
+    def test_ligands_keep_their_ids(self):
+        residues = [("ATOM", "ALA", 1, " "), ("ATOM", "CYS", 2, " "), ("HETATM", "NAG", 2, " ")]
+        structure = _structure(_pdb(residues))
+        mappings, _, _ = prepare_renumbering(structure, [SeqRecord(Seq("MACG"), id="t")])
+        out = apply_renumbering(structure, mappings)
+        ids = [r.id for r in out[0]["A"]]
+        self.assertIn(("H_NAG", 2, " "), ids)
+        self.assertIn((" ", 2, " "), ids)
+        self.assertIn((" ", 3, " "), ids)
+
+    def test_all_models_renumbered(self):
+        body = _pdb([("ATOM", "ALA", 1, " "), ("ATOM", "CYS", 2, " ")]).replace("END\n", "")
+        text = "MODEL        1\n" + body + "ENDMDL\nMODEL        2\n" + body + "ENDMDL\nEND\n"
+        structure = _structure(text)
+        mappings, _, _ = prepare_renumbering(structure, [SeqRecord(Seq("MAC"), id="t")])
+        out = apply_renumbering(structure, mappings)
+        for model in out:
+            self.assertEqual([r.id[1] for r in model["A"]], [2, 3])
+
+    def test_extract_header_records(self):
+        text = "HEADER    X\nCRYST1   10.000   10.000   10.000  90.00  90.00  90.00 P 1           1\nATOM ...\n"
+        self.assertEqual(extract_header_records(text).splitlines()[0][:6], "CRYST1")
+
 if __name__ == '__main__':
     unittest.main()
