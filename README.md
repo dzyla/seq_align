@@ -31,6 +31,10 @@ The sequence type (DNA/protein) is detected automatically and can be overridden.
 | Look and feel | "Lab notebook" day theme and "Notebook night" dark theme (switch in ⋮ → Settings, or follow your OS). The **Appearance** popover in the sidebar sets the figure palette, density, and whether interactive charts match the theme or use publication white. |
 | Phylogenetic trees | Rectangular, circular and unrooted layouts (plus cladogram), Classic ink / Support dots / Clade colour styles, midpoint or outgroup rooting, ladderize, named clades. Labels never overlap. Export SVG (editable text), PDF or 600-dpi PNG; an Explore view adds hover and zoom. |
 | Similarity matrix | Colour range from the data (off-diagonal min–max), fixed 0–1 or custom; colormap, reverse and per-cell values. |
+| Alignment figure | ESPript-style publication figure on the MSA page: Classic ESPript, Lab notebook or Greyscale; secondary structure from a loaded, uploaded or fetched structure (DSSP, or the file's HELIX/SHEET records); region and sequence selection; consensus line, conservation bar and markers; SVG (editable text), PDF or 600-dpi PNG |
+| Consensus suggestions | Back-to-consensus mutations for any sequence of the MSA, ranked by consensus frequency × conservation, with BLOSUM62, CSV export and 3D view |
+| Motifs & sites | Built-in sites (N-glycosylation sequon, furin, TEV, thrombin, PreScission, Factor Xa, enterokinase, NG/DG, cysteines) plus your own PROSITE pattern or regex; how many sequences carry each site; CSV export and 3D view |
+| UniProt batch | Fetch by ID → UniProt batch: hundreds of accessions or entry names (paste or upload), a UniProt search query (with a size limit), or gene names + organism; preview, tick and load |
 
 Quick bench calculators (restriction maps, codon usage, primers, cloning) live in the companion app
 [Bio-Bench](https://dzyla.github.io/toolbox/).

@@ -304,3 +304,29 @@ def test_safe_fasta_turns_failure_into_comment(monkeypatch):
         raise FetchError("UniProt returned no entry for: Q00000")
     monkeypatch.setattr(ub, "fetch_uniprot_fasta", boom)
     assert ub.safe_fasta(["Q00000"]) == "# UniProt download failed: UniProt returned no entry for: Q00000\n"
+
+
+def test_msa_figure_consensus_and_motif_tabs():
+    at = _load_globins_msa()
+    seg = lambda key: next(w for w in at.get("button_group") if w.key == key)  # noqa: E731
+    for style in ("Classic ESPript", "Lab notebook", "Greyscale"):
+        seg("fig_style").set_value(style).run()
+        assert not at.exception, (style, at.exception)
+    labels = [d.label for d in at.get("download_button")]
+    assert {"SVG", "PDF", "PNG (600 dpi)"} <= set(labels)
+    assert any("Identical columns" in c.value for c in at.caption)
+    assert "Consensus suggestions (CSV)" in labels and "Sites (CSV)" in labels
+    at.text_input(key="motif_custom").input("C-x(2)-{P").run()
+    assert not at.exception and any("Invalid motif" in e.value for e in at.error)
+
+
+def test_msa_figure_with_structure_secondary_structure():
+    import pathlib
+    from modules.structures import StructureFile
+    at = _load_globins_msa()
+    data = (pathlib.Path(__file__).parent / "data" / "1crn.pdb").read_bytes()
+    at.session_state["extra_structures"] = {"1crn.pdb": StructureFile(name="1crn.pdb", data=data, fmt="PDB")}
+    at.run()
+    at.radio(key="fig_ss_use").set_value("From a structure").run()
+    assert not at.exception
+    assert any("1crn chain A" in c.value for c in at.caption)

@@ -15,6 +15,7 @@ from io import StringIO
 from collections import Counter
 import pandas as pd
 from typing import List, Dict, Tuple
+from modules.alignment_tabs import consensus_tab, figure_tab, motifs_tab
 from modules.utils import have_params_changed, stale_notice
 from modules.viz import alignment_to_codes, plot_msa
 from modules.seqtools import clean_sequence, fingerprint
@@ -107,7 +108,8 @@ def msa_section(sequences, seq_type):
         st.error(str(e))
         mutations = {}
 
-    tab_titles = ["Alignment & Heatmap", "Point Mutations", "Variant Table", "Conservation", "Phylogenetic Tree"]
+    tab_titles = ["Alignment & Heatmap", "Figure", "Point Mutations", "Variant Table", "Conservation", "Consensus",
+                  "Motifs & sites", "Phylogenetic Tree"]
     if calculate_representative:
         tab_titles.insert(tab_titles.index("Variant Table") + 1, "Representative Sequence")
     tabs = st.tabs(tab_titles)
@@ -125,6 +127,15 @@ def msa_section(sequences, seq_type):
                 st.error(str(e))
             st.download_button("Percent identity matrix (CSV)", identity_matrix_frame(view).to_csv(),
                                "percent_identity.csv", "text/csv", on_click="ignore", icon=":material/download:")
+
+    with tabs[tab_titles.index("Figure")]:
+        figure_tab(rows, ref_seq_id, seq_type)
+
+    with tabs[tab_titles.index("Consensus")]:
+        consensus_tab(rows, ref_seq_id, seq_type)
+
+    with tabs[tab_titles.index("Motifs & sites")]:
+        motifs_tab(rows, ref_seq_id)
 
     with tabs[tab_titles.index("Point Mutations")]:
         st.subheader("Point mutations relative to the reference")
