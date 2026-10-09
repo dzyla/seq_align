@@ -17,7 +17,7 @@ import pandas as pd
 from typing import List, Dict, Tuple
 from modules.alignment_tabs import consensus_tab, figure_tab, motifs_tab
 from modules.utils import have_params_changed, stale_notice
-from modules.viz import alignment_to_codes, plot_msa
+from modules.viz import alignment_to_codes, alignment_view
 from modules.seqtools import clean_sequence, fingerprint
 from modules.conservation import (
     CONSERVATION_COLORS, column_conservation, conservation_grade, identity_matrix_frame, logo_figure,
@@ -118,7 +118,7 @@ def msa_section(sequences, seq_type):
         st.subheader("MSA result")
         if not view_empty:
             st.write(f"Total sequences: {len(view)}. MSA length: {len(view[0][1])}")
-            plot_msa(alignment_to_codes([s for _, s in view]), [i for i, _ in view], plot_method, seq_type)
+            alignment_view(view, seq_type, plot_method, ref_seq_id)
             try:
                 st.download_button(label="Download MSA", data=serialize_alignment(view, msa_output_format),
                                    file_name=f"msa_alignment.{msa_output_format}", mime="text/plain",

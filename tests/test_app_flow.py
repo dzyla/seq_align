@@ -471,3 +471,26 @@ def test_ancestral_result_stale_when_sequence_edited(monkeypatch):
     at.text_area(key="fasta_text").set_value("\n".join(lines)).run()
     assert not at.exception
     assert any("Settings changed: press Reconstruct ancestors to update." in i.value for i in at.info)
+
+
+def test_msa_colour_schemes_and_sequence_viewer():
+    at = _load_globins_msa()
+    for scheme in ("ClustalX", "Percent identity", "Conservation", "Similarity to reference", "Zappo"):
+        at.selectbox(key="msa_color_scheme").set_value(scheme).run()
+        assert not at.exception, (scheme, at.exception)
+    next(w for w in at.get("button_group") if w.key == "msa_view_mode").set_value("Sequence viewer").run()
+    assert not at.exception
+    at.number_input(key="msa_view_jump").set_value(60).run()
+    assert not at.exception
+    at.slider(key="msa_view_width").set_value(120).run()
+    assert not at.exception
+
+
+def test_msa_jump_does_not_lock_start_slider():
+    at = _load_globins_msa()
+    next(w for w in at.get("button_group") if w.key == "msa_view_mode").set_value("Sequence viewer").run()
+    at.number_input(key="msa_view_jump").set_value(60).run()
+    jumped = at.slider(key="msa_view_start").value
+    at.slider(key="msa_view_start").set_value(10).run()
+    assert not at.exception
+    assert at.slider(key="msa_view_start").value == 10 and jumped != 10
