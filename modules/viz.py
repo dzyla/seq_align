@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from matplotlib.colors import ListedColormap
 from modules.msa_colors import DESCRIPTIONS, SCHEMES, Coloring, color_alignment
-from modules.ui import show_plotly
+from modules.ui import STATIC_PLOT, show_plotly
 
 ALPHABET = "-ACDEFGHIKLMNPQRSTVWYXBZJOU*"
 GAP_CODE = 0
@@ -197,6 +197,20 @@ def _text_colour(hex_colour):
     return "#ffffff" if luminance < 0.20 else "#1a1a1a"
 
 
+def conservation_line_figure(scores):
+    """Fixed (non-zooming) conservation profile in reference coordinates; unscored positions leave gaps.
+    `scores` is a list (position 1 first) or a {position: score} dict as from reference_conservation."""
+    if isinstance(scores, dict):
+        scores = [scores.get(p) for p in range(1, max(scores, default=0) + 1)]
+    x = np.arange(1, len(scores) + 1)
+    fig = go.Figure(go.Scatter(x=x, y=scores, mode="lines", line=dict(color="#0f766e", width=1.5),
+                               connectgaps=False, hovertemplate="Position %{x}: %{y:.2f}<extra></extra>"))
+    fig.update_xaxes(title_text="Reference position", fixedrange=True)
+    fig.update_yaxes(title_text="Conservation", range=[0, 1.02], fixedrange=True, automargin=True)
+    fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=40), dragmode=False, showlegend=False)
+    return fig
+
+
 def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservation, consensus):
     """Sequence viewer: a window of columns with letters in every cell, a conservation bar and a consensus row
     above, the x axis labelled in reference numbering every 10 residues."""
@@ -235,9 +249,12 @@ def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservat
     fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=[str(ref_numbers[t - 1]) for t in ticks],
                      row=2, col=1, title_text="Reference position")
     fig.update_yaxes(range=[0, 1], showticklabels=False, row=1, col=1)
+    # the window is moved with the sliders; zooming the conservation track or the letters only misaligns them
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
     fig.update_yaxes(type="category", autorange="reversed", automargin=True, row=2, col=1)
     fig.update_layout(height=min(4000, 120 + 22 * len(rows)), margin=dict(l=10, r=10, t=10, b=40),
-                      plot_bgcolor="white", bargap=0.1)
+                      plot_bgcolor="white", bargap=0.1, dragmode=False)
     return fig
 
 
@@ -297,4 +314,5 @@ def alignment_view(pairs, seq_type, plot_method, reference_id):
     # column statistics come from the whole alignment; a row window only slices the colouring
     sub = Coloring(coloring.index[rows], coloring.colors, coloring.legend)
     show_plotly(msa_viewer_figure(codes[rows], [ids[r] for r in rows], sub, start - 1, width, ref_numbers,
-                                  conservation, consensus), width="stretch")
+                                  conservation, consensus), width="stretch",
+                config=STATIC_PLOT)

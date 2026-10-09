@@ -17,7 +17,7 @@ import pandas as pd
 from typing import List, Dict, Tuple
 from modules.alignment_tabs import consensus_tab, figure_tab, motifs_tab
 from modules.utils import have_params_changed, stale_notice
-from modules.viz import alignment_to_codes, alignment_view
+from modules.viz import alignment_to_codes, alignment_view, conservation_line_figure
 from modules.seqtools import clean_sequence, fingerprint
 from modules.conservation import (
     CONSERVATION_COLORS, column_conservation, conservation_grade, identity_matrix_frame, logo_figure,
@@ -30,7 +30,7 @@ from modules.structure_view import (
 from modules.variants import variant_matrix, variants_long
 from modules.phylogeny import (
     TREE_METHODS, TreeError, bootstrap_tree, build_tree_from_alignment, phylogenetic_tree_section)
-from modules.ui import page_header
+from modules.ui import STATIC_PLOT, page_header, show_plotly
 
 def msa_section(sequences, seq_type):
     """Multiple Sequence Alignment workflow. The alignment is computed once per dataset."""
@@ -215,8 +215,7 @@ def msa_section(sequences, seq_type):
         ref_scores = reference_conservation(rows, ref_seq_id, seq_type)
         st.caption(f"1 − normalized Shannon entropy per column (gaps excluded; columns with > 50% gaps "
                    f"are not scored). Positions are in {ref_seq_id} coordinates.")
-        st.line_chart(pd.DataFrame({"Conservation": pd.Series(ref_scores)}), x_label="Reference position",
-                      y_label="Conservation")
+        show_plotly(conservation_line_figure(ref_scores), width="stretch", config=STATIC_PLOT)
         if not view_empty:
             st.caption("Information content in bits against a uniform background, "
                        "scaled by each column's non-gap fraction.")

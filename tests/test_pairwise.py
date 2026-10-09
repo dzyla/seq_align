@@ -143,3 +143,15 @@ def test_blocks_query_labels_use_original_coordinates_when_circular():
     first_q = [l for l in format_alignment_blocks(result).splitlines() if l.startswith("t ")][0].split()
     expected = ((1 - 1 + result.query_rotation) % result.query_length) + 1
     assert int(first_q[1]) == expected != 1
+
+
+def test_block_widths_including_full_line():
+    from modules.pairwise import BLOCK_WIDTHS, format_result_text
+    seq = "MKVLAAGIVGLLAQWERTYASDFGKLCV" * 5          # 140 residues
+    result = align_pair(rec("r", seq), rec("q", seq[:70] + "W" + seq[71:]), "Protein", "global")
+    n = len(result.aligned_ref)
+    for label, width in BLOCK_WIDTHS.items():
+        blocks = [l for l in format_alignment_blocks(result, width).splitlines() if l.startswith("r ")]
+        assert len(blocks) == (1 if width is None else -(-n // width)), label
+        assert all(len(l.split()[2]) <= (width or n) for l in blocks)
+    assert format_alignment_blocks(result, 50) in format_result_text(result, 50)
