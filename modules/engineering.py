@@ -6,8 +6,10 @@ import pandas as pd
 GAP_CHARS = "-."
 CONSENSUS_COLUMNS = ["Position", "Suggestion", "Target", "Consensus", "Consensus frequency", "Conservation",
                      "BLOSUM62", "Sequences", "Score", "Column"]
-HIT_COLUMNS = ["Sequence", "Motif", "Start", "End", "Match", "Column"]
-SITE_COLUMNS = ["Motif", "Reference position", "Sequences with site", "Fraction", "Sequence IDs", "Column"]
+HIT_COLUMNS = ["Sequence", "Motif", "Start", "End", "Match", "Column", "End column"]
+SITE_COLUMNS = ["Motif", "Reference position", "Sequences with site", "Fraction", "Sequence IDs", "Column",
+                "Reference residues"]
+INTERNAL_COLUMNS = ["Column", "End column", "Reference residues"]  # for plotting; dropped from tables and CSVs
 MOTIF_LIBRARY = {
     "N-glycosylation sequon": "N-{P}-[ST]-{P}",
     "Furin site": "R-x-[KR]-R",
@@ -74,11 +76,11 @@ def prosite_to_regex(pattern):
         anchor_start = element.startswith("<")
         anchor_end = element.endswith(">")
         core = element.lstrip("<").rstrip(">")
-        m = re.fullmatch(r"(x|[A-Z]|\[[A-Z]+>?\]|\{[A-Z]+\})(?:\((\d+)(?:,(\d+))?\))?", core)
+        m = re.fullmatch(r"([xX]|[A-Z]|\[[A-Z]+>?\]|\{[A-Z]+\})(?:\((\d+)(?:,(\d+))?\))?", core)
         if not m:
             raise ValueError(f"Invalid PROSITE element {element!r} in {pattern!r}")
         unit, lo, hi = m.groups()
-        if unit == "x":
+        if unit in ("x", "X"):
             regex = "."
         elif unit.startswith("["):
             regex = "[" + unit[1:-1].replace(">", "") + "]"
@@ -106,23 +108,29 @@ def compile_motifs(motifs, syntax="prosite"):
 
 def find_motifs(rows, compiled):
     """All (overlapping) motif hits in each ungapped sequence, mapped back to alignment columns.
-    Start/End are 1-based positions in that sequence; Column is the alignment column of the first residue."""
+    Start/End are 1-based positions in that sequence; Column / End column are the alignment columns of the first
+    and last residue. Overlaps are found by restarting the search one residue after each match start, so the
+    user's pattern is used as compiled (inline flags and backreferences keep working); empty matches are skipped."""
     out = []
     for seq_id, aligned in rows:
         columns = [j for j, c in enumerate(aligned) if c not in GAP_CHARS]
         ungapped = "".join(aligned[j] for j in columns)
         for name, regex in compiled.items():
-            for m in re.finditer(f"(?=({regex.pattern}))", ungapped, regex.flags):
-                text = m.group(1)
-                if not text:
-                    continue
-                start = m.start()
-                out.append([seq_id, name, start + 1, start + len(text), text, columns[start]])
+            pos = 0
+            while pos <= len(ungapped):
+                m = regex.search(ungapped, pos)
+                if m is None:
+                    break
+                start, end = m.span()
+                pos = start + 1
+                if end > start:
+                    out.append([seq_id, name, start + 1, end, m.group(0), columns[start], columns[end - 1]])
     return pd.DataFrame(out, columns=HIT_COLUMNS)
 
 
 def site_summary(hits, rows, ref_id):
-    """One row per (motif, alignment column): how many sequences carry the site there and the reference position."""
+    """One row per (motif, alignment column): how many sequences carry the site there and the reference position.
+    Reference residues: every reference position inside the columns the site spans (for 3D highlighting)."""
     if hits.empty:
         return pd.DataFrame(columns=SITE_COLUMNS)
     ref = dict(rows)[ref_id]
@@ -135,6 +143,9 @@ def site_summary(hits, rows, ref_id):
     out = []
     for (motif, column), group in hits.groupby(["Motif", "Column"], sort=True):
         ids = list(dict.fromkeys(group["Sequence"]))
-        out.append([motif, ref_pos.get(column), f"{len(ids)}/{n}", round(len(ids) / n, 3), ", ".join(ids), column])
+        last = int(group["End column"].max())
+        residues = tuple(ref_pos[j] for j in range(column, last + 1) if j in ref_pos)
+        out.append([motif, ref_pos.get(column), f"{len(ids)}/{n}", round(len(ids) / n, 3), ", ".join(ids), column,
+                    residues])
     frame = pd.DataFrame(out, columns=SITE_COLUMNS)
     return frame.sort_values(["Fraction", "Column"], ascending=[False, True], kind="stable").reset_index(drop=True)

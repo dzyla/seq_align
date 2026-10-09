@@ -25,8 +25,9 @@ ROOTING_OPTIONS = {"Midpoint": "midpoint", "Outgroup": "outgroup", "As built": "
 
 @st.cache_data(max_entries=16, show_spinner=False)
 def tree_figure_outputs(newick, layout, cladogram, rooting, outgroup, ladderize, n_clades, style_items):
-    """Rooted tree, Drawing, 150-dpi preview PNG, SVG and PDF for one set of figure settings (cached)."""
+    """Rooted tree, Drawing, 150-dpi preview PNG, SVG, PDF and PNG export dpi for one set of settings (cached)."""
     from modules.tree_layout import assign_clades, compute_geometry, prepare_tree, recursion_headroom
+    from modules.figures import png_dpi
     from modules.tree_render import TreeStyle, export_bytes, place, quiet_fonts, render_matplotlib
 
     style = TreeStyle(**{k: list(v) if k == "clade_names" else v for k, v in style_items})
@@ -40,10 +41,10 @@ def tree_figure_outputs(newick, layout, cladogram, rooting, outgroup, ladderize,
         with quiet_fonts():  # framed exactly like the downloads
             fig.savefig(preview, format="png", dpi=150, facecolor="white", bbox_inches="tight", pad_inches=0.05)
         return {"drawing": drawing, "preview": preview.getvalue(), "svg": export_bytes(fig, "svg"),
-                "pdf": export_bytes(fig, "pdf"), "newick": tree_to_newick(tree)}
+                "pdf": export_bytes(fig, "pdf"), "newick": tree_to_newick(tree), "png_dpi": png_dpi(fig)}
 
 
-def _png_600(drawing):
+def _png(drawing):
     from modules.tree_render import export_bytes, render_matplotlib
     return export_bytes(render_matplotlib(drawing), "png")
 
@@ -143,7 +144,7 @@ def phylogenetic_tree_section(tree, key_prefix="tree"):
                        on_click="ignore", width="stretch", key=key("dl_svg"))
     c2.download_button("PDF", out["pdf"], "phylogenetic_tree.pdf", "application/pdf",
                        icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_pdf"))
-    c3.download_button("PNG (600 dpi)", lambda: _png_600(drawing), "phylogenetic_tree.png", "image/png",
+    c3.download_button(f"PNG ({out['png_dpi']} dpi)", lambda: _png(drawing), "phylogenetic_tree.png", "image/png",
                        icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_png"))
     c4.download_button("Newick", out["newick"], "phylogenetic_tree.nwk", "text/plain",
                        icon=":material/download:", on_click="ignore", width="stretch", key=key("dl_nwk"),

@@ -135,7 +135,7 @@ def msa_section(sequences, seq_type):
         consensus_tab(rows, ref_seq_id, seq_type)
 
     with tabs[tab_titles.index("Motifs & sites")]:
-        motifs_tab(rows, ref_seq_id)
+        motifs_tab(rows, ref_seq_id, seq_type)
 
     with tabs[tab_titles.index("Point Mutations")]:
         st.subheader("Point mutations relative to the reference")

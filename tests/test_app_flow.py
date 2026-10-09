@@ -330,3 +330,21 @@ def test_msa_figure_with_structure_secondary_structure():
     at.radio(key="fig_ss_use").set_value("From a structure").run()
     assert not at.exception
     assert any("1crn chain A" in c.value for c in at.caption)
+
+
+def test_msa_custom_regex_with_flags_and_backreference():
+    at = _load_globins_msa()
+    at.radio(key="motif_syntax").set_value("Regular expression").run()
+    for pattern in ("(?i)n[^p][st]", r"(a)\1", "C(("):
+        at.text_input(key="motif_custom").input(pattern).run()
+        assert not at.exception, (pattern, at.exception)
+    assert any("Invalid motif" in e.value for e in at.error)        # only the last one is invalid
+
+
+def test_dna_msa_motifs_tab_points_to_custom_patterns():
+    at = load(">a\nATGCATGCAATT\n>b\nATGCATGGAATT\n>c\nATGAATGCAATA\n")
+    at.radio(key="analysis_select").set_value("MSA").run()
+    at.button[0].click().run()
+    assert not at.exception
+    assert any("built-in motifs are protein motifs" in c.value for c in at.caption)
+    assert any("DNA: identity only" in c.value for c in at.caption)

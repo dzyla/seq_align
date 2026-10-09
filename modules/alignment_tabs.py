@@ -1,13 +1,27 @@
 """MSA tabs: publication figure (ESPript style), back-to-consensus suggestions and motifs & sites."""
+import re
+
 import streamlit as st
 
-from modules.engineering import (FEW_SEQUENCES, MOTIF_LIBRARY, compile_motifs, consensus_suggestions, find_motifs,
-                                 site_summary)
-from modules.espript import (MAX_CELLS, STYLES, FigureOptions, cell_count, figure_caption, map_ss_to_alignment,
-                             region_columns, render_alignment_figure, secondary_structure)
-from modules.figures import export_bytes, preview_png
+from modules.engineering import (FEW_SEQUENCES, INTERNAL_COLUMNS, MOTIF_LIBRARY, compile_motifs,
+                                 consensus_suggestions, find_motifs, site_summary)
+from modules.espript import (MAX_CELLS, STYLES, FigureOptions, cell_count, figure_caption, region_columns,
+                             render_alignment_figure, secondary_structure, ss_elements_by_column)
+from modules.figures import export_bytes, png_dpi, preview_png
 
-CONSENSUS_COLOUR, MOTIF_COLOUR = "#d6312b", "#2a5db0"
+CONSENSUS_COLOUR, CONSENSUS_LIGHT, MOTIF_COLOUR = "#d6312b", "#f4b6b3", "#2a5db0"
+
+
+def rank_colours(n, strong=CONSENSUS_COLOUR, light=CONSENSUS_LIGHT):
+    """n hex colours from `strong` (rank 1) to `light` (last rank), evenly spaced."""
+    a = [int(strong[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(light[i:i + 2], 16) for i in (1, 3, 5)]
+    return ["#" + "".join(f"{round(x + (y - x) * (k / (n - 1) if n > 1 else 0)):02x}" for x, y in zip(a, b))
+            for k in range(n)]
+
+
+def _table(frame):
+    return frame.drop(columns=[c for c in INTERNAL_COLUMNS if c in frame.columns])
 
 
 def consensus_settings(rows, ref_id):
@@ -44,46 +58,49 @@ def cached_secondary_structure(name, data, fmt, chain_id):
     return secondary_structure(StructureFile(name=name, data=data, fmt=fmt), chain_id)
 
 
+def _figure(rows, ref_id, ss, options, markers, ss_label, columns):
+    return render_alignment_figure(list(rows), ref_id, list(ss) if ss else None, FigureOptions(**dict(options)),
+                                   {k: set(v) for k, v in markers}, ss_label, columns)
+
+
 @st.cache_data(max_entries=8, show_spinner=False)
-def figure_outputs(rows, ref_id, ss_by_column, options, markers, ss_label, columns):
-    """Preview PNG, SVG and PDF of the alignment figure (cached on every input)."""
-    fig = render_alignment_figure(list(rows), ref_id, ss_by_column, FigureOptions(**dict(options)),
-                                  {k: set(v) for k, v in markers}, ss_label, columns)
-    return {"preview": preview_png(fig), "svg": export_bytes(fig, "svg"), "pdf": export_bytes(fig, "pdf")}
+def figure_outputs(rows, ref_id, ss, options, markers, ss_label, columns):
+    """Preview PNG, SVG, PDF and the PNG export resolution of the alignment figure (cached on every input)."""
+    fig = _figure(rows, ref_id, ss, options, markers, ss_label, columns)
+    return {"preview": preview_png(fig), "svg": export_bytes(fig, "svg"), "pdf": export_bytes(fig, "pdf"),
+            "png_dpi": png_dpi(fig)}
 
 
-def _png_600(rows, ref_id, ss_by_column, options, markers, ss_label, columns):
-    fig = render_alignment_figure(list(rows), ref_id, ss_by_column, FigureOptions(**dict(options)),
-                                  {k: set(v) for k, v in markers}, ss_label, columns)
-    return export_bytes(fig, "png")
+def _png(*args):
+    return export_bytes(_figure(*args), "png")
 
 
 def _ss_controls(ref_seq):
     """Secondary-structure source for the figure: a structure (loaded, uploaded, or fetched by PDB ID / UniProt
-    accession for AlphaFold) and chain, or none. Returns (chain_seq, ss, source, label, reason)."""
+    accession for AlphaFold) and chain, or none. Returns (chain_seq, ss, source, label, reason, breaks)."""
     from modules.structure_view import _add_structure_controls, available_structures, cached_residue_table, rank_chains
 
     use = st.radio("Secondary structure", ["From a structure", "None"], horizontal=True, key="fig_ss_use",
                    index=0 if available_structures() else 1)
     if use == "None":
-        return "", "", "none", None, ""
+        return "", "", "none", None, "", ()
     _add_structure_controls("fig_ss")
     structures = available_structures()
     if not structures:
         st.caption("Load, upload or fetch a structure to show its secondary structure.")
-        return "", "", "none", None, ""
+        return "", "", "none", None, "", ()
     c1, c2 = st.columns(2)
     name = c1.selectbox("Structure", list(structures), key="fig_ss_structure")
     sf = structures[name]
     table = cached_residue_table(sf.data, sf.fmt, sf.name)
     if not table:
         st.warning("No protein chains in this structure.")
-        return "", "", "none", None, ""
+        return "", "", "none", None, "", ()
     ranked = rank_chains(ref_seq, table)
     chain_id = c2.selectbox("Chain", [c for c, _ in ranked], key="fig_ss_chain",
                             format_func=lambda c: f"{c} ({dict(ranked)[c]:.1%} identity)")
-    seq, ss, source, reason = cached_secondary_structure(sf.name, sf.data, sf.fmt, chain_id)
-    return seq, ss, source, f"{sf.stem} chain {chain_id}", reason
+    seq, ss, source, reason, breaks = cached_secondary_structure(sf.name, sf.data, sf.fmt, chain_id)
+    return seq, ss, source, f"{sf.stem} chain {chain_id}", reason, breaks
 
 
 def figure_tab(rows, ref_id, seq_type):
@@ -116,22 +133,22 @@ def figure_tab(rows, ref_id, seq_type):
     mark_cons = c4.toggle("Mark consensus suggestions", value=True, key="fig_mark_cons")
     mark_motifs = c5.toggle("Mark motif sites", value=True, key="fig_mark_motifs")
 
-    seq, ss, source, ss_label, reason = _ss_controls("".join(c for c in shown_ref_aligned if c not in "-."))
+    seq, ss, source, ss_label, reason, breaks = _ss_controls("".join(c for c in shown_ref_aligned if c not in "-."))
     if reason:
         st.caption(reason)
-    ss_by_column = map_ss_to_alignment(shown_ref_aligned, seq, ss) if source != "none" else None
+    elements = tuple(ss_elements_by_column(shown_ref_aligned, seq, ss, breaks)) if source != "none" else None
 
     markers = {}
     if mark_cons:
         target, min_freq = consensus_settings(rows, ref_id)
         suggestions = consensus_suggestions(rows, target, min_freq, seq_type=seq_type)
         if not suggestions.empty:
-            markers["Consensus suggestion"] = tuple(sorted(suggestions["Column"]))
+            markers[f"Consensus suggestion ({target})"] = tuple(sorted(suggestions["Column"]))
     if mark_motifs:
         motifs, syntax = motif_settings()
         try:
-            hits = find_motifs(rows, _compiled_motifs(motifs, syntax)) if motifs else None
-        except ValueError:
+            hits = find_motifs(shown, _compiled_motifs(motifs, syntax)) if motifs else None
+        except (ValueError, re.error):
             hits = None
         if hits is not None and not hits.empty:
             markers["Motif site"] = tuple(sorted(set(hits["Column"])))
@@ -144,8 +161,8 @@ def figure_tab(rows, ref_id, seq_type):
         return
     options = FigureOptions(style=STYLES[style_label], block=block, font=float(font), threshold=float(threshold),
                             consensus=consensus, conservation=conservation, truncate=int(truncate),
-                            underscores=underscores)
-    args = (tuple(shown), shown_ref, ss_by_column, tuple(vars(options).items()),
+                            underscores=underscores, seq_type=seq_type)
+    args = (tuple(shown), shown_ref, elements, tuple(vars(options).items()),
             tuple((k, tuple(v)) for k, v in markers.items()), ss_label, (c0, c1_))
     with st.spinner("Drawing the figure..."):
         out = figure_outputs(*args)
@@ -156,7 +173,7 @@ def figure_tab(rows, ref_id, seq_type):
                        on_click="ignore", width="stretch", key="fig_dl_svg")
     d2.download_button("PDF", out["pdf"], "alignment_figure.pdf", "application/pdf", icon=":material/download:",
                        on_click="ignore", width="stretch", key="fig_dl_pdf")
-    d3.download_button("PNG (600 dpi)", lambda: _png_600(*args), "alignment_figure.png", "image/png",
+    d3.download_button(f"PNG ({out['png_dpi']} dpi)", lambda: _png(*args), "alignment_figure.png", "image/png",
                        icon=":material/download:", on_click="ignore", width="stretch", key="fig_dl_png")
 
 
@@ -178,19 +195,22 @@ def consensus_tab(rows, ref_id, seq_type):
     if table.empty:
         st.info("No suggestions: the sequence matches the consensus at every qualifying column.")
         return
-    st.dataframe(table.drop(columns=["Column"]), hide_index=True, width="stretch")
-    st.download_button("Consensus suggestions (CSV)", table.drop(columns=["Column"]).to_csv(index=False),
+    st.dataframe(_table(table), hide_index=True, width="stretch")
+    st.download_button("Consensus suggestions (CSV)", _table(table).to_csv(index=False),
                        "consensus_suggestions.csv", "text/csv", on_click="ignore", icon=":material/download:")
     target_seq = "".join(c for c in dict(rows)[target] if c not in "-.")
-    colors = {int(r.Position): (CONSENSUS_COLOUR, r.Suggestion) for r in table.itertuples()}
+    colors = {int(r.Position): (colour, f"#{rank} {r.Suggestion}")  # table order = rank; strongest colour first
+              for rank, (r, colour) in enumerate(zip(table.itertuples(), rank_colours(len(table))), 1)}
     structure_highlight_panel(target_seq, colors, key="cons_3d", title="Show suggestions on structure (Mol*)")
 
 
-def motifs_tab(rows, ref_id):
+def motifs_tab(rows, ref_id, seq_type="Protein"):
     """Motif and site map across the family."""
     from modules.structure_view import structure_highlight_panel
 
     st.subheader("Motifs and sites")
+    if seq_type != "Protein":
+        st.caption("The built-in motifs are protein motifs; use a custom pattern for DNA.")
     st.multiselect("Built-in motifs", list(MOTIF_LIBRARY), default=["N-glycosylation sequon"], key="motif_select",
                    format_func=lambda k: f"{k}  ({MOTIF_LIBRARY[k]})")
     c1, c2 = st.columns([1, 3])
@@ -202,7 +222,7 @@ def motifs_tab(rows, ref_id):
         return
     try:
         hits = find_motifs(rows, _compiled_motifs(motifs, syntax))
-    except ValueError as e:
+    except (ValueError, re.error) as e:
         st.error(f"Invalid motif: {e}")
         return
     if hits.empty:
@@ -210,16 +230,16 @@ def motifs_tab(rows, ref_id):
         return
     summary = site_summary(hits, rows, ref_id)
     st.markdown("**Sites across the family**")
-    st.dataframe(summary.drop(columns=["Column"]), hide_index=True, width="stretch")
+    st.dataframe(_table(summary), hide_index=True, width="stretch")
     st.markdown("**Hits per sequence**")
-    st.dataframe(hits.drop(columns=["Column"]), hide_index=True, width="stretch")
+    st.dataframe(_table(hits), hide_index=True, width="stretch")
     d1, d2 = st.columns(2)
-    d1.download_button("Sites (CSV)", summary.drop(columns=["Column"]).to_csv(index=False), "motif_sites.csv",
+    d1.download_button("Sites (CSV)", _table(summary).to_csv(index=False), "motif_sites.csv",
                        "text/csv", on_click="ignore", icon=":material/download:")
-    d2.download_button("Hits (CSV)", hits.drop(columns=["Column"]).to_csv(index=False), "motif_hits.csv",
+    d2.download_button("Hits (CSV)", _table(hits).to_csv(index=False), "motif_hits.csv",
                        "text/csv", on_click="ignore", icon=":material/download:")
     ref_seq = "".join(c for c in dict(rows)[ref_id] if c not in "-.")
-    colors = {int(r[1]): (MOTIF_COLOUR, f"{r[0]} ({r[2]})")
-              for r in summary[["Motif", "Reference position", "Sequences with site"]].itertuples(index=False)
-              if r[1] is not None and r[1] == r[1]}
+    colors = {pos: (MOTIF_COLOUR, f"{motif} ({count})")  # every reference residue the site spans
+              for motif, count, residues in zip(summary["Motif"], summary["Sequences with site"],
+                                                summary["Reference residues"]) for pos in residues}
     structure_highlight_panel(ref_seq, colors, key="motif_3d", title="Show sites on structure (Mol*)")

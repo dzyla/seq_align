@@ -79,3 +79,36 @@ def test_zero_length_regex_matches_are_ignored():
     # Review Focus: a custom regex that can match the empty string must not flood the table
     hits = find_motifs([("x", "CAAC")], compile_motifs({"z": "A*"}, "regex"))
     assert list(hits["Match"]) == ["AA", "A"]
+
+
+def test_prosite_upper_case_x_is_any():
+    assert prosite_to_regex("H-X-X-X-H") == "H...H"
+    assert prosite_to_regex("C-X(2)-C") == "C.{2}C"
+
+
+@pytest.mark.parametrize("pattern,expected", [("(?i)n[^p][st]", ["NAS", "NVT"]), (r"(a)\1", ["AA", "AA"])])
+def test_custom_regex_flags_and_backreferences(pattern, expected):
+    # Final review: inline flags and backreferences broke when wrapped in a lookahead
+    hits = find_motifs([("x", "MNAS-NVTAAA")], compile_motifs({"c": pattern}, "regex"))
+    assert list(hits["Match"]) == expected
+
+
+def test_overlapping_hits_and_end_columns():
+    hits = find_motifs([("x", "AA-AA")], compile_motifs({"AA": "A-A"}))
+    assert list(hits["Start"]) == [1, 2, 3] and list(hits["Column"]) == [0, 1, 3]
+    assert list(hits["End column"]) == [1, 3, 4]
+
+
+def test_site_summary_lists_every_reference_residue_of_the_site():
+    rows = [("r", "MN-GTW"), ("s", "MNAGTW")]
+    hits = find_motifs(rows, compile_motifs({"glyco": "N-x-[ST]"}))
+    summary = site_summary(hits, rows, "r")
+    assert list(summary["Reference residues"]) == [(2, 3, 4)]
+
+
+def test_rank_colours_run_from_strong_to_light():
+    from modules.alignment_tabs import rank_colours
+    assert rank_colours(0) == []
+    assert rank_colours(1) == ["#d6312b"]
+    colours = rank_colours(3)
+    assert colours[0] == "#d6312b" and colours[-1] == "#f4b6b3" and len(set(colours)) == 3

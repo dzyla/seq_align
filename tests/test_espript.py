@@ -7,7 +7,7 @@ from PIL import Image
 
 from modules.espript import (MAX_CELLS, FigureOptions, cell_count, column_classes, consensus_line, figure_caption,
                              layout_blocks, map_ss_to_alignment, region_columns, render_alignment_figure,
-                             secondary_structure, ss_elements)
+                             secondary_structure, ss_elements, ss_elements_by_column)
 from modules.figures import export_bytes
 from modules.structures import StructureFile
 
@@ -62,7 +62,7 @@ def test_layout_and_region():
 @pytest.mark.parametrize("name,fmt", [("1crn.pdb", "PDB"), ("1crn.cif", "mmCIF")])
 def test_dssp_crambin(name, fmt):
     sf = StructureFile(name=name, data=(DATA / name).read_bytes(), fmt=fmt)
-    seq, ss, source, reason = secondary_structure(sf, "A")
+    seq, ss, source, reason, _ = secondary_structure(sf, "A")
     assert source == "DSSP" and len(seq) == len(ss) == 46 and not reason
     kinds = [k for k, *_ in ss_elements(ss)]
     assert kinds.count("alpha") == 2 and kinds.count("beta") == 2
@@ -75,7 +75,7 @@ def test_file_records_fallback(monkeypatch):
     records = ("HELIX    1  H1 ILE A    7  PRO A   19  1                                  13\n"
                "SHEET    1   S1 2 THR A   1  CYS A   4  0\n")
     sf = StructureFile(name="x.pdb", data=(records + text).encode(), fmt="PDB")
-    seq, ss, source, reason = secondary_structure(sf, "A")
+    seq, ss, source, reason, _ = secondary_structure(sf, "A")
     assert source == "file records" and "mkdssp" in reason
     assert ss[6:19] == "H" * 13 and ss[:4] == "EEEE"
 
@@ -85,7 +85,7 @@ def test_no_secondary_structure_explains_why(monkeypatch):
     monkeypatch.setattr(espript, "find_mkdssp", lambda: None)
     text = "\n".join(l for l in (DATA / "1crn.pdb").read_text().splitlines() if not l.startswith(("HELIX", "SHEET")))
     sf = StructureFile(name="x.pdb", data=text.encode(), fmt="PDB")
-    _, ss, source, reason = secondary_structure(sf, "A")
+    _, ss, source, reason, _ = secondary_structure(sf, "A")
     assert source == "none" and set(ss) == {"-"} and "not available" in reason
 
 
@@ -95,7 +95,7 @@ def test_dssp_failure_reason_is_reported(monkeypatch):
     monkeypatch.setattr(espript, "_dssp", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     text = "\n".join(l for l in (DATA / "1crn.pdb").read_text().splitlines() if not l.startswith(("HELIX", "SHEET")))
     sf = StructureFile(name="x.pdb", data=text.encode(), fmt="PDB")
-    _, ss, source, reason = secondary_structure(sf, "A")
+    _, ss, source, reason, _ = secondary_structure(sf, "A")
     assert source == "none" and set(ss) == {"-"} and "boom" in reason
 
 
@@ -138,7 +138,7 @@ def test_secondary_structure_every_chain_of_a_complex():
     table = cached_residue_table(sf.data, sf.fmt, sf.name)
     assert len(table) >= 2
     for chain_id, residues in table.items():
-        seq, ss, source, _ = secondary_structure(sf, chain_id)
+        seq, ss, source, _, _ = secondary_structure(sf, chain_id)
         assert len(seq) == len(ss) == len(residues) and source in ("DSSP", "file records", "none")
 
 
@@ -147,3 +147,82 @@ def test_dna_rows_and_single_column_region_render():
     rows = [("x", "ATGC-A"), ("y", "ATGCTA")]
     fig = render_alignment_figure(rows, "x", None, FigureOptions(), columns=region_columns("ATGC-A", 3, 3))
     assert sum(t.get_gid() == "residue" for t in fig.axes[0].texts) == 2
+
+
+def test_ss_elements_split_at_record_breaks():
+    els = ss_elements("-HHHHHHHHHHHH-", breaks={7})
+    assert [(a, b, label) for _, a, b, label in els] == [(1, 6, "α1"), (7, 12, "α2")]
+
+
+def test_ss_elements_by_column_bridges_reference_gaps():
+    # Final review: a helix interrupted by a reference gap is one element spanning the gap columns
+    els = ss_elements_by_column("MKV--LLAEW", "MKVLLAEW", "-HHHHHH-")
+    assert els == [("alpha", 1, 8, "α1")]
+
+
+def test_render_draws_one_element_across_reference_gap():
+    rows = [("r", "MKV--LLAEW"), ("s", "MKVAALLAEW")]
+    for ss in (ss_elements_by_column(rows[0][1], "MKVLLAEW", "-HHHHHH-"),
+               map_ss_to_alignment(rows[0][1], "MKVLLAEW", "-HHHHHH-")):
+        fig = render_alignment_figure(rows, "r", ss, FigureOptions())
+        labels = [t.get_text() for t in fig.axes[0].texts if t.get_gid() == "ss_element"]
+        assert labels == ["α1"] and len(fig.axes[0].lines) == 1
+        x = [t.get_position()[0] for t in fig.axes[0].texts if t.get_gid() == "residue"][:10]   # row r
+        helix = fig.axes[0].lines[0].get_xdata()
+        assert min(helix) < x[1] < x[3] < x[4] < x[8] < max(helix) < x[9]   # K..E, across the gap columns
+
+
+# 4HHB chain B: three touching HELIX records (A, B, C helices of beta-globin)
+HBB_4HHB = "VHLTPEEKSAVTALWGKVNVDEVGGEALGRLLVVYPWTQRFFESF"
+HELIX_4HHB_B = ("HELIX    9  BA THR B    4  VAL B   18  1                                  15\n"
+                "HELIX   10  BB ASN B   19  VAL B   34  1                                  16\n"
+                "HELIX   11  BC TYR B   35  PHE B   41  1                                   7\n")
+
+
+def _ca_only_pdb(chain, seq):
+    from Bio.SeqUtils import seq3
+    lines = [f"ATOM  {i:5d}  CA  {seq3(aa).upper()} {chain}{i:4d}    {i * 3.8:8.3f}{0.0:8.3f}{0.0:8.3f}  1.00 20.00"
+             f"           C" for i, aa in enumerate(seq, 1)]
+    return "\n".join(lines) + "\nEND\n"
+
+
+def test_touching_helix_records_stay_separate(monkeypatch):
+    import modules.espript as espript
+    monkeypatch.setattr(espript, "find_mkdssp", lambda: None)
+    sf = StructureFile(name="hbb.pdb", data=(HELIX_4HHB_B + _ca_only_pdb("B", HBB_4HHB)).encode(), fmt="PDB")
+    seq, ss, source, reason, breaks = secondary_structure(sf, "B")
+    assert seq == HBB_4HHB and source == "file records"
+    assert ss[3:41] == "H" * 38 and set(breaks) == {3, 18, 34}
+    els = ss_elements_by_column(HBB_4HHB, seq, ss, breaks)
+    assert [(a + 1, b + 1, label) for _, a, b, label in els] == [(4, 18, "α1"), (19, 34, "α2"), (35, 41, "α3")]
+
+
+def test_dna_columns_identity_only():
+    seqs = ["ATGA", "TTGA", "ATGT"]
+    kinds = [k for k, _, _ in column_classes(seqs, 0.5, seq_type="DNA")]
+    assert kinds == ["none", "ident", "ident", "none"]
+    assert column_classes(seqs, 0.5)[0][0] == "sim"      # protein rules: A/T share the STA group
+    caption = figure_caption(FigureOptions(seq_type="DNA"), "none")
+    assert "DNA: identity only" in caption and "FYW" not in caption
+
+
+def test_columns_gapped_in_every_shown_row_are_dropped():
+    # Final review: a hidden row filled columns 3-4; the shown rows are all gaps there
+    rows = [("r", "MKV--LAWGKVE"), ("s", "MKV--LAWGRVE")]
+    fig = render_alignment_figure(rows, "r", None, FigureOptions(), markers={"m": {7}})
+    texts = fig.axes[0].texts
+    residues = [t for t in texts if t.get_gid() == "residue"]
+    assert len(residues) == 2 * 10 and not any(t.get_text() == "." for t in residues)
+    assert [t.get_text() for t in texts if t.get_gid() == "ruler"] == ["10"]
+    marker = next(t for t in texts if t.get_gid() == "marker")
+    assert marker.get_position()[0] == pytest.approx(residues[5].get_position()[0])   # column 7 -> 6th shown W
+
+
+def test_legend_lists_only_marker_sets_inside_the_region():
+    rows = [("r", "MKVLAWGKVE"), ("s", "MKVLAWGRVE")]
+    fig = render_alignment_figure(rows, "r", None, FigureOptions(), markers={"Out": {9}, "In": {2}},
+                                  columns=(0, 5))
+    legend = [t.get_text() for t in fig.axes[0].texts if t.get_gid() == "legend"]
+    assert "In" in legend and "Out" not in legend
+    triangle = next(t for t in fig.axes[0].texts if t.get_gid() == "marker")
+    assert triangle.get_text() == "▲"          # the second set keeps its symbol
