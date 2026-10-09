@@ -11,6 +11,7 @@ def available_analyses(has_sequences, has_structures, seq_type, n_sequences=None
     if has_sequences:
         if n_sequences != 1:
             options += list(NEEDS_MULTIPLE)
+        options.append("Coevolution")               # its upload source works with any dataset
         if seq_type == "DNA":
             options += ["Translate DNA"]
         else:

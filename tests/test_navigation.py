@@ -3,7 +3,7 @@ from modules.navigation import available_analyses
 
 def test_protein_sequences():
     assert available_analyses(True, False, "Protein") == [
-        "Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Phylogenetic Tree",
+        "Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Phylogenetic Tree", "Coevolution",
         "Antibody Prediction", "Sequence Properties", "Convert Formats",
     ]
 
@@ -34,7 +34,7 @@ def test_dna_tools_page_removed():
 
 def test_single_sequence_omits_multi_sequence_analyses():
     options = available_analyses(True, False, "DNA", n_sequences=1)
-    assert options == ["Translate DNA", "Convert Formats"]
+    assert options == ["Coevolution", "Translate DNA", "Convert Formats"]
     for name in ("Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Phylogenetic Tree"):
         assert name not in options
 

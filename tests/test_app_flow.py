@@ -348,3 +348,39 @@ def test_dna_msa_motifs_tab_points_to_custom_patterns():
     assert not at.exception
     assert any("built-in motifs are protein motifs" in c.value for c in at.caption)
     assert any("DNA: identity only" in c.value for c in at.caption)
+
+
+def _coupled_a3m(n=300, L=40, seed=0):
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    aa = "ACDEFGHIKLMNPQRSTVWY"
+    msa = rng.integers(0, 20, size=(n, L))
+    pick = np.array([[0, 5], [3, 9], [11, 2], [17, 14]])[rng.integers(0, 4, size=n)]
+    msa[:, 5], msa[:, 30] = pick[:, 0], pick[:, 1]
+    return "".join(f">s{k}\n" + "".join(aa[x] for x in row) + "\n" for k, row in enumerate(msa)).encode()
+
+
+def test_coevolution_page_with_uploaded_alignment():
+    at = AppTest.from_file("app.py", default_timeout=180)
+    at.run()
+    at.button(key="coevo_standalone_btn").click().run()
+    at.session_state["coevo_alignment"] = ("synthetic.a3m", _coupled_a3m())
+    at.run()
+    for method in ("plmDCA (accurate)", "Mean-field DCA (fast)"):
+        next(w for w in at.get("button_group") if w.key == "coevo_method").set_value(method).run()
+        at.button(key="coevo_run").click().run()
+        assert not at.exception, (method, at.exception)
+        assert any(d.label == "Top pairs (CSV)" for d in at.get("download_button"))
+        assert any(m.label == "Neff / L" for m in at.metric)
+
+
+def test_coevolution_long_query_needs_region_and_shallow_alignment_warns():
+    at = AppTest.from_file("app.py", default_timeout=180)
+    at.run()
+    at.button(key="coevo_standalone_btn").click().run()
+    at.session_state["coevo_alignment"] = ("long.a3m", _coupled_a3m(n=40, L=250))
+    at.run()
+    assert any("Choose a region" in w.value for w in at.warning)          # 250 > plmDCA's 200-column limit
+    at.button(key="coevo_run").click().run()
+    assert not at.exception
+    assert any("too few diverse sequences" in e.value for e in at.error)   # 40 random sequences: Neff/L < 1
