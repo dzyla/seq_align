@@ -192,7 +192,8 @@ def _text_colour(hex_colour):
     lin = [(c / 12.92) if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
            for c in (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))]
     luminance = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
-    return "#ffffff" if luminance < 0.45 else "#1a1a1a"
+    # 0.18 is where white and near-black give equal WCAG contrast
+    return "#ffffff" if luminance < 0.18 else "#1a1a1a"
 
 
 def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservation, consensus):
@@ -229,7 +230,7 @@ def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservat
     fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=[str(ref_numbers[t - 1]) for t in ticks],
                      row=2, col=1, title_text="Reference position")
     fig.update_yaxes(range=[0, 1], showticklabels=False, row=1, col=1)
-    fig.update_yaxes(type="category", autorange="reversed", row=2, col=1)
+    fig.update_yaxes(type="category", autorange="reversed", automargin=True, row=2, col=1)
     fig.update_layout(height=min(4000, 120 + 22 * len(rows)), margin=dict(l=10, r=10, t=10, b=40),
                       plot_bgcolor="white", bargap=0.1)
     return fig

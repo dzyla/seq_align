@@ -81,3 +81,4 @@ def test_text_colour_contrasts_with_background():
     assert _text_colour("#0000ff") == "#ffffff"
     assert _text_colour("#ffffff") == "#1a1a1a"
     assert _text_colour("#ccccff") == "#1a1a1a"
+    assert _text_colour("#14b8a6") == "#1a1a1a" and _text_colour("#ff0000") == "#1a1a1a"   # light teal, red: dark letters
