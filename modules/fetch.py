@@ -73,7 +73,10 @@ def _get(url, what, params=None, hints=None):
 
 UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"
 UNIPROT_FIELDS = "accession,id,protein_name,gene_primary,organism_name,length"
+GENE_FIELDS = UNIPROT_FIELDS + ",gene_names"
 PREVIEW_COLUMNS = ["Accession", "Entry name", "Protein", "Gene", "Organism", "Length"]
+_TSV_HEADERS = {"Entry": "Accession", "Entry Name": "Entry name", "Protein names": "Protein",
+                "Gene Names (primary)": "Gene", "Organism": "Organism", "Length": "Length", "Gene Names": "Gene names"}
 UNIPROT_HINTS = {429: "UniProt rate limit reached; wait a few seconds and try again.",
                  400: "UniProt rejected the request; check the IDs or the query syntax."}
 ORGANISMS = {"Human": 9606, "Mouse": 10090, "Rat": 10116, "Yeast (S. cerevisiae)": 559292, "E. coli K-12": 83333,
@@ -110,13 +113,14 @@ def extract_uniprot_ids(text):
 
 
 def _tsv_frame(text):
+    """Parse UniProt TSV, mapping columns by header name (unknown headers are kept as they are)."""
     import pandas as pd
     from io import StringIO
 
     if not text.strip():
         return pd.DataFrame(columns=PREVIEW_COLUMNS)
     frame = pd.read_csv(StringIO(text), sep="\t", dtype=str).fillna("")
-    frame.columns = PREVIEW_COLUMNS[:len(frame.columns)]
+    frame = frame.rename(columns=_TSV_HEADERS)
     if "Length" in frame:
         frame["Length"] = pd.to_numeric(frame["Length"], errors="coerce").astype("Int64")
     return frame
@@ -151,17 +155,18 @@ def uniprot_batch_tsv(accessions, entry_names=()):
     return frame, missing
 
 
-def uniprot_query_count(query):
+def uniprot_query_count(query, isoforms=False):
     """Number of UniProtKB entries matching a query (from the X-Total-Results header)."""
     response = _get(f"{UNIPROT_REST}/search", "UniProt search", hints=UNIPROT_HINTS,
-                    params={"query": query, "size": 1, "format": "tsv", "fields": "accession"})
+                    params={"query": query, "size": 1, "format": "tsv", "fields": "accession",
+                            "includeIsoform": "true" if isoforms else "false"})
     return int(response.headers.get("x-total-results", 0))
 
 
-def uniprot_query_tsv(query, isoforms=False):
+def uniprot_query_tsv(query, isoforms=False, fields=UNIPROT_FIELDS):
     """Preview table for every entry matching a query (call uniprot_query_count first to respect the cap)."""
     response = _get(f"{UNIPROT_REST}/stream", "UniProt search", hints=UNIPROT_HINTS,
-                    params={"query": query, "format": "tsv", "fields": UNIPROT_FIELDS,
+                    params={"query": query, "format": "tsv", "fields": fields,
                             "includeIsoform": "true" if isoforms else "false"})
     return _tsv_frame(response.text)
 
@@ -172,14 +177,34 @@ def gene_query(genes, taxon, reviewed=True):
     return query + (" AND reviewed:true" if reviewed else "")
 
 
+def _label_gene_matches(frame, genes):
+    """Add 'Matched gene' (requested genes found among the entry's gene names) and 'Match' ('primary' when one of
+    them is the primary gene, else 'synonym'). The 'Gene names' column is dropped."""
+    names = frame["Gene names"] if "Gene names" in frame else [""] * len(frame)
+    matched, match = [], []
+    for primary, synonyms in zip(frame["Gene"], names):
+        tokens = {t.upper() for t in str(synonyms).split()}
+        hits = [g for g in genes if g in tokens]
+        primaries = {p.strip().upper() for p in str(primary).split(";")}
+        matched.append(", ".join(hits))
+        match.append("primary" if any(h in primaries for h in hits) else "synonym")
+    frame = frame.drop(columns=["Gene names"], errors="ignore")
+    return frame.assign(**{"Matched gene": matched, "Match": match})
+
+
 def uniprot_gene_tsv(genes, taxon, reviewed=True, isoforms=False):
-    """Preview table for gene names in one organism (batched, <= 100 genes per request).
-    Returns (frame, genes with no entry)."""
+    """Preview table for gene names in one organism (batched, <= 100 genes per request). Counts the matches first and
+    refuses above MAX_QUERY_CAP. Returns (frame, requested genes with no entry)."""
     genes = list(dict.fromkeys(g.strip().upper() for g in genes if g.strip()))
-    frame = _concat([uniprot_query_tsv(gene_query(chunk, taxon, reviewed), isoforms)
-                     for chunk in _chunks(genes, GENE_CHUNK)])
-    found = {g.strip().upper() for cell in frame["Gene"] for g in str(cell).split(";")}
-    return frame, [g for g in genes if g not in found]
+    chunks = _chunks(genes, GENE_CHUNK)
+    total = sum(uniprot_query_count(gene_query(c, taxon, reviewed), isoforms) for c in chunks)
+    if total > MAX_QUERY_CAP:
+        raise FetchError(f"The genes match {total:,} entries, above the limit of {MAX_QUERY_CAP:,}. "
+                         "Use fewer genes or keep 'Reviewed only' on.")
+    frame = _concat([uniprot_query_tsv(gene_query(c, taxon, reviewed), isoforms, GENE_FIELDS) for c in chunks])
+    frame = _label_gene_matches(frame, genes)
+    matched = {g for cell in frame["Matched gene"] for g in str(cell).split(", ") if g}
+    return frame, [g for g in genes if g not in matched]
 
 
 def fetch_uniprot_fasta(ids):

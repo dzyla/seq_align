@@ -254,6 +254,7 @@ def test_shell_has_sidebar_groups_and_appearance():
     assert at.session_state["appearance_palette"] == "Lab teal"
     assert [m.label for m in at.metric][:4] == ["Sequences", "Type", "Length range", "Median length"]
 
+
 def test_uniprot_batch_preview_and_load(monkeypatch):
     import pandas as pd
     import modules.uniprot_batch as ub
@@ -274,3 +275,32 @@ def test_uniprot_batch_preview_and_load(monkeypatch):
     at.button(key="uniprot_load").click().run()
     assert not at.exception
     assert at.metric[0].value == "2"
+
+
+def test_gene_preview_unticks_synonym_rows(monkeypatch):
+    import pandas as pd
+    import modules.uniprot_batch as ub
+    frame = pd.DataFrame({"Accession": ["P02185", "P01900"], "Entry name": ["MYG_MOUSE", "DMB_MOUSE"],
+                          "Protein": ["Myoglobin", "MHC class II"], "Gene": ["Mb", "H2-DMb1"],
+                          "Organism": ["Mouse", "Mouse"], "Length": [154, 260], "Matched gene": ["MB", "MB"],
+                          "Match": ["primary", "synonym"]})
+    monkeypatch.setattr(ub, "uniprot_gene_tsv", lambda genes, taxon, reviewed, isoforms: (frame, []))
+    at = AppTest.from_file("app.py", default_timeout=60)
+    at.run()
+    at.selectbox(key="input_format").select("Fetch by ID").run()
+    at.selectbox(key="fetch_source").select("UniProt batch").run()
+    at.radio(key="uniprot_mode").set_value("Genes + organism").run()
+    at.text_area(key="uniprot_genes").input("MB").run()
+    at.button(key="uniprot_search").click().run()
+    assert not at.exception
+    assert any("start unticked" in c.value for c in at.caption)
+
+
+def test_safe_fasta_turns_failure_into_comment(monkeypatch):
+    import modules.uniprot_batch as ub
+    from modules.fetch import FetchError
+
+    def boom(accessions):
+        raise FetchError("UniProt returned no entry for: Q00000")
+    monkeypatch.setattr(ub, "fetch_uniprot_fasta", boom)
+    assert ub.safe_fasta(["Q00000"]) == "# UniProt download failed: UniProt returned no entry for: Q00000\n"

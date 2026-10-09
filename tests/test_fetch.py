@@ -145,14 +145,70 @@ def test_entry_name_lookup_keeps_exact_matches_only(monkeypatch):
     assert list(frame["Entry name"]) == ["HBA_HUMAN"] and missing == ["NOPE_HUMAN"]
 
 
+GENE_TSV_HEADER = "Entry\tEntry Name\tProtein names\tGene Names (primary)\tOrganism\tLength\tGene Names\n"
+SEARCH = "https://rest.uniprot.org/uniprotkb/search"
+STREAM = "https://rest.uniprot.org/uniprotkb/stream"
+
+
+def gene_tsv(*rows):
+    return GENE_TSV_HEADER + "".join("\t".join(map(str, r)) + "\n" for r in rows)
+
+
 def test_gene_query_and_missing_genes(monkeypatch):
     from modules.fetch import gene_query, uniprot_gene_tsv
     assert gene_query(["HBB", "TP53"], 9606) == "(gene_exact:HBB OR gene_exact:TP53) AND organism_id:9606 AND reviewed:true"
     assert gene_query(["HBB"], 10090, reviewed=False) == "(gene_exact:HBB) AND organism_id:10090"
-    calls = install(monkeypatch, {"https://rest.uniprot.org/uniprotkb/stream": FakeResponse(text=tsv(
-        ("P69905", "HBA_HUMAN", "Hb alpha", "HBA1; HBA2", "Human", 142)))})
+    calls = install(monkeypatch, {
+        SEARCH: FakeResponse(headers={"x-total-results": "1"}),
+        STREAM: FakeResponse(text=gene_tsv(("P69905", "HBA_HUMAN", "Hb alpha", "HBA1; HBA2", "Human", 142, "HBA1 HBA2"))),
+    })
     frame, missing = uniprot_gene_tsv(["hba2", "NOTAGENE"], 9606, isoforms=True)
-    assert missing == ["NOTAGENE"] and calls[0][1]["includeIsoform"] == "true"
+    assert missing == ["NOTAGENE"]
+    stream = [params for url, params in calls if url == STREAM][0]
+    assert stream["includeIsoform"] == "true" and "gene_names" in stream["fields"]
+    assert list(frame["Match"]) == ["primary"] and frame["Matched gene"].iloc[0] == "HBA2"
+
+
+def test_gene_synonyms_labelled_and_not_reported_missing(monkeypatch):
+    from modules.fetch import uniprot_gene_tsv
+    install(monkeypatch, {
+        SEARCH: FakeResponse(headers={"x-total-results": "2"}),
+        STREAM: FakeResponse(text=gene_tsv(
+            ("P02185", "MYG_MOUSE", "Myoglobin", "Mb", "Mouse", 154, "Mb"),
+            ("P01900", "DMB_MOUSE", "H-2 class II histocompatibility antigen, M beta chain", "H2-DMb1", "Mouse", 260,
+             "H2-DMb1 H-2Mb1 Mb"))),
+    })
+    frame, missing = uniprot_gene_tsv(["MB"], 10090)
+    assert missing == []
+    assert dict(zip(frame["Entry name"], frame["Match"])) == {"MYG_MOUSE": "primary", "DMB_MOUSE": "synonym"}
+
+
+def test_requested_synonym_not_reported_missing(monkeypatch):
+    from modules.fetch import uniprot_gene_tsv
+    install(monkeypatch, {
+        SEARCH: FakeResponse(headers={"x-total-results": "1"}),
+        STREAM: FakeResponse(text=gene_tsv(("P04637", "P53_HUMAN", "Cellular tumor antigen p53", "TP53", "Human", 393,
+                                            "P53 TRP53"))),
+    })
+    frame, missing = uniprot_gene_tsv(["p53"], 9606)
+    assert missing == [] and frame["Match"].iloc[0] == "synonym"
+
+
+def test_gene_mode_respects_result_cap(monkeypatch):
+    from modules.fetch import MAX_QUERY_CAP, uniprot_gene_tsv
+    calls = install(monkeypatch, {SEARCH: FakeResponse(headers={"x-total-results": str(MAX_QUERY_CAP + 1)})})
+    with pytest.raises(FetchError, match="above the limit"):
+        uniprot_gene_tsv(["HBB"], 9606)
+    assert [url for url, _ in calls] == [SEARCH]
+
+
+def test_query_count_passes_isoform_flag(monkeypatch):
+    from modules.fetch import uniprot_query_count
+    calls = install(monkeypatch, {SEARCH: FakeResponse(text="Entry\n", headers={"x-total-results": "3"})})
+    assert uniprot_query_count("family:globin", isoforms=True) == 3
+    assert calls[0][1]["includeIsoform"] == "true"
+    uniprot_query_count("family:globin")
+    assert calls[1][1]["includeIsoform"] == "false"
 
 
 def test_query_count_reads_header(monkeypatch):

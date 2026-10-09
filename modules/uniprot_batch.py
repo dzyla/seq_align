@@ -5,7 +5,7 @@ import re
 
 import streamlit as st
 
-from modules.fetch import (DEFAULT_QUERY_CAP, MAX_QUERY_CAP, ORGANISMS, PREVIEW_COLUMNS, FetchError, FetchResult,
+from modules.fetch import (DEFAULT_QUERY_CAP, MAX_QUERY_CAP, ORGANISMS, FetchError, FetchResult,
                            extract_uniprot_ids, fetch_uniprot_fasta, uniprot_batch_tsv, uniprot_gene_tsv,
                            uniprot_query_count, uniprot_query_tsv)
 
@@ -47,7 +47,7 @@ def uniprot_batch_sidebar():
                 if not query.strip():
                     raise FetchError("Enter a UniProt query.")
                 with st.spinner("Counting matches..."):
-                    count = uniprot_query_count(query)
+                    count = uniprot_query_count(query, isoforms)
                 if count == 0:
                     raise FetchError("The query matched no UniProt entries.")
                 if count > cap:
@@ -74,6 +74,14 @@ def uniprot_batch_sidebar():
         st.sidebar.error(str(e))
 
 
+def safe_fasta(accessions):
+    """FASTA for the lazy download button; a failed fetch becomes a comment line instead of an exception."""
+    try:
+        return fetch_uniprot_fasta(accessions)
+    except FetchError as e:
+        return f"# UniProt download failed: {e}\n"
+
+
 def uniprot_batch_preview():
     """Main-area preview: tick entries, then load them (sets st.session_state.fetched for the normal pipeline)."""
     preview = st.session_state.get("uniprot_preview")
@@ -88,10 +96,13 @@ def uniprot_batch_preview():
             st.info("No entries to load.")
             return
         table = frame.copy()
-        table.insert(0, "Load", True)
-        digest = hashlib.sha1(",".join(frame["Accession"]).encode()).hexdigest()[:10]
-        edited = st.data_editor(table, hide_index=True, width="stretch", disabled=PREVIEW_COLUMNS,
-                                key=f"uniprot_editor_{digest}")
+        synonym = [m == "synonym" for m in frame["Match"]] if "Match" in frame else [False] * len(frame)
+        table.insert(0, "Load", [not s for s in synonym])
+        if any(synonym):
+            st.caption("Rows matched only through a gene synonym start unticked.")
+        digest = hashlib.sha1(frame.to_csv().encode()).hexdigest()[:10]
+        edited = st.data_editor(table, hide_index=True, width="stretch",
+                                disabled=[c for c in table.columns if c != "Load"], key=f"uniprot_editor_{digest}")
         chosen = edited.loc[edited["Load"], "Accession"].tolist()
         c1, c2, c3 = st.columns(3)
         if c1.button(f"Load {len(chosen)} selected", key="uniprot_load", type="primary", disabled=not chosen,
@@ -104,5 +115,5 @@ def uniprot_batch_preview():
         c2.download_button("Table (TSV)", edited[edited["Load"]].drop(columns=["Load"]).to_csv(sep="\t", index=False),
                            "uniprot_entries.tsv", "text/tab-separated-values", on_click="ignore",
                            icon=":material/download:", disabled=not chosen)
-        c3.download_button("FASTA", lambda: fetch_uniprot_fasta(chosen), "uniprot_entries.fasta", "text/plain",
+        c3.download_button("FASTA", lambda accessions=chosen: safe_fasta(accessions), "uniprot_entries.fasta", "text/plain",
                            on_click="ignore", icon=":material/download:", disabled=not chosen)
