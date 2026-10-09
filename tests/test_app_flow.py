@@ -398,3 +398,45 @@ def test_coevolution_result_invalidated_when_alignment_changes():
     at.run()
     assert any("Settings changed" in i.value for i in at.info)
     assert not any(m.label == "Neff / L" for m in at.metric)
+
+
+def test_ancestral_page_with_fixture(monkeypatch):
+    from pathlib import Path
+    import modules.ancestral_page as page
+    from modules.ancestral import IQTreeResult, parse_report, parse_state, parse_tree
+    data = Path(__file__).parent / "data" / "asr"
+    alphabet, states = parse_state((data / "globins.state").read_text())
+    model, loglik = parse_report((data / "globins.iqtree").read_text())
+    text = (data / "globins_aln.fasta").read_text().split(">")[1:]
+    rows = [(chunk.splitlines()[0], "".join(chunk.splitlines()[1:])) for chunk in text]
+    result = IQTreeResult(parse_tree((data / "globins.treefile").read_text()), states, alphabet, model, loglik,
+                          "IQ-TREE multicore version 2.0.3", {"iqtree.state": b"x"})
+    monkeypatch.setattr(page, "find_iqtree", lambda: ("/usr/bin/iqtree2", "IQ-TREE 2.0.3"))
+    monkeypatch.setattr(page, "cached_run_iqtree", lambda r, s, m, b: result)
+    import modules.msa as msa_module
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": rows)
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
+    at.button(key="asr_run").click().run()
+    assert not at.exception, at.exception
+    labels = [d.label for d in at.get("download_button")]
+    assert {"ML ancestor (FASTA)", "AltAll (FASTA)", "IQ-TREE files (ZIP)"} <= set(labels)
+    at.radio(key="asr_pick").set_value("From the list of nodes").run()
+    assert not at.exception
+    at.radio(key="asr_rooting").set_value("Outgroup").run()
+    at.multiselect(key="asr_outgroup").set_value([r[0] for r in rows]).run()     # all leaves cannot root
+    assert not at.exception and any("midpoint rooting instead" in w.value for w in at.warning)
+
+
+def test_ancestral_page_without_iqtree_and_bad_outgroup(monkeypatch):
+    import modules.ancestral_page as page
+    monkeypatch.setattr(page, "find_iqtree", lambda: None)
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
+    assert not at.exception and any("conda install -c bioconda iqtree" in e.value for e in at.error)

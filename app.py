@@ -4,6 +4,7 @@ from io import StringIO
 import streamlit as st
 from Bio import Phylo, SeqIO
 
+from modules.ancestral_page import ancestral_section
 from modules.antibody import antibody_prediction_section
 from modules.best_match import best_match_finder_section
 from modules.coevolution_page import coevolution_section
@@ -200,6 +201,9 @@ the **Structure Viewer** (Mol*), and the **Show on structure** panels map mutati
 Pairwise alignments support Global, Local and Overlap (free end gaps) modes. MSA uses FAMSA.
 Mutation positions are always reported in reference-sequence coordinates.
 
+**Coevolution** predicts residue contacts from a deep alignment (upload a ColabFold .a3m); **Ancestral
+Reconstruction** infers ancestors with IQ-TREE.
+
 Quick calculators (restriction maps, codon usage, primers, cloning) live in [Bio-Bench](%s).
 """ % BIO_BENCH_URL
 
@@ -296,6 +300,8 @@ def main():
         dna_translation_section(sequences)
     elif alignment_mode == "Coevolution":
         coevolution_section(sequences, seq_type)
+    elif alignment_mode == "Ancestral Reconstruction":
+        ancestral_section(sequences, seq_type)
     elif alignment_mode == "Convert Formats":
         format_conversion_section(sequences, input_format, seq_type)
     elif alignment_mode == "Structure Viewer":

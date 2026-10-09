@@ -41,3 +41,9 @@ def test_single_sequence_omits_multi_sequence_analyses():
 
 def test_two_sequences_unchanged():
     assert available_analyses(True, False, "DNA", n_sequences=2) == available_analyses(True, False, "DNA")
+
+
+def test_ancestral_reconstruction_needs_four_sequences():
+    assert "Ancestral Reconstruction" not in available_analyses(True, False, "Protein", n_sequences=3)
+    assert "Ancestral Reconstruction" in available_analyses(True, False, "Protein", n_sequences=4)
+    assert "Coevolution" in available_analyses(True, False, "Protein", n_sequences=1)
