@@ -554,3 +554,14 @@ def test_msa_start_column_kept_across_width_changes():
     assert not at.exception and at.slider(key="msa_view_start").value == 70
     at.slider(key="msa_view_width").set_value(150).run()
     assert not at.exception and at.slider(key="msa_view_start").value == 70
+
+
+def test_pairwise_residues_per_line():
+    at = run_pairwise(load(FASTA_A))
+    for label, width in (("50", 50), ("100", 100), ("Full", None)):
+        next(w for w in at.get("button_group") if w.key == "pw_block_width").set_value(label).run()
+        assert not at.exception
+        lines = [l for l in at.code[0].value.splitlines() if l.strip()]
+        widest = max(len(l.split()[2]) for l in lines[::3])
+        assert widest <= (width or 10_000)
+    assert len([l for l in at.code[0].value.splitlines() if l.strip()]) == 3      # Full: one block

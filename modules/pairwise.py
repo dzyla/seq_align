@@ -171,7 +171,6 @@ def pairwise_alignment_section(sequences, seq_type):
         stale_notice()
         return
 
-    alignment_text = format_result_text(result)
     stats = compute_alignment_stats(result.aligned_ref, result.aligned_query, result.match_line)
     st.subheader("Alignment result")
     c1, c2, c3, c4 = st.columns(4)
@@ -179,7 +178,10 @@ def pairwise_alignment_section(sequences, seq_type):
     c2.metric("Similarity", f"{stats['similarity_pct']}%", f"{stats['similar']}/{stats['length']}", delta_color="off")
     c3.metric("Gaps", f"{stats['gaps_pct']}%", f"{stats['gaps']}/{stats['length']}", delta_color="off")
     c4.metric("Score", f"{result.score:.1f}")
-    st.code(format_alignment_blocks(result))
+    block = st.segmented_control("Residues per line", list(BLOCK_WIDTHS), default="60", required=True,
+                                 key="pw_block_width") or "60"
+    alignment_text = format_result_text(result, BLOCK_WIDTHS[block])
+    st.code(format_alignment_blocks(result, BLOCK_WIDTHS[block]))
     for note in result.notes:
         st.caption(note)
 
@@ -343,8 +345,13 @@ def compute_alignment_stats(aligned_ref, aligned_query, match_line):
             "identity_pct": pct(identical), "similarity_pct": pct(similar), "gaps_pct": pct(gaps)}
 
 
+# residues per line in the text alignment; None = the whole alignment on one line
+BLOCK_WIDTHS = {"50": 50, "60": 60, "75": 75, "100": 100, "Full": None}
+
+
 def format_alignment_blocks(result, width=60):
     """Alignment wrapped in blocks of `width` columns with start/end positions per line."""
+    width = width or max(1, len(result.aligned_ref))
     name_width = max(len(result.ref_id), len(result.query_id))
 
     def ref_label(pos):
@@ -376,7 +383,7 @@ def format_alignment_blocks(result, width=60):
     return "\n".join(lines)
 
 
-def format_result_text(result):
+def format_result_text(result, width=60):
     """Plain-text report: header, statistics, wrapped alignment and notes."""
     s = compute_alignment_stats(result.aligned_ref, result.aligned_query, result.match_line)
     header = (
@@ -387,7 +394,7 @@ def format_result_text(result):
         f"Gaps: {s['gaps']}/{s['length']} ({s['gaps_pct']}%)   Score: {result.score:.2f}\n\n"
     )
     notes = "".join(f"Note: {n}\n" for n in result.notes)
-    return header + format_alignment_blocks(result) + ("\n" + notes if notes else "")
+    return header + format_alignment_blocks(result, width) + ("\n" + notes if notes else "")
 
 
 def mutation_lollipop(mutations, ref_length, seq_type=None):

@@ -57,6 +57,10 @@ def palette_colorscale():
     return LAB_TEAL[theme_type()] if palette == "Lab teal" else palette
 
 
+# plotly config for charts that should not zoom or pan (pass as config= to show_plotly)
+STATIC_PLOT = {"displayModeBar": False, "scrollZoom": False, "doubleClick": False}
+
+
 def show_plotly(fig, **kwargs):
     """st.plotly_chart honouring the Interactive charts appearance setting."""
     if st.session_state.get("appearance_charts") == "Publication white":

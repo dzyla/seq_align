@@ -86,3 +86,17 @@ def test_letters_shown_only_for_small_alignments():
 def test_letters_hidden_for_wide_alignments():
     wide = alignment_to_codes(["M" * 1000, "K" * 1000, "A" * 1000])
     assert msa_figure_plotly(wide, ["a", "b", "c"], "Protein").data[0].texttemplate is None
+
+
+def test_conservation_plots_do_not_zoom():
+    import numpy as np
+    from modules.msa_colors import color_alignment
+    from modules.viz import alignment_to_codes, conservation_line_figure, msa_viewer_figure, reference_numbering
+    fig = conservation_line_figure({1: 0.2, 3: 0.9})
+    assert list(fig.data[0].y) == [0.2, None, 0.9]
+    assert fig.layout.xaxis.fixedrange and fig.layout.yaxis.fixedrange and fig.layout.dragmode is False
+    seqs = ["MKVLAAGIVG", "MRVLA-GIVG"]
+    fig = msa_viewer_figure(alignment_to_codes(seqs), ["a", "b"], color_alignment(seqs, "ClustalX"), 0, 10,
+                            reference_numbering(seqs[0]), np.ones(10), "x" * 10)
+    axes = [fig.layout[k] for k in fig.layout if k.startswith(("xaxis", "yaxis"))]
+    assert axes and all(a.fixedrange for a in axes)
