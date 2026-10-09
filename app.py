@@ -9,6 +9,7 @@ from modules.best_match import best_match_finder_section
 from modules.clustering import sequence_clustering_section
 from modules.conversion import format_conversion_section
 from modules.fetch import FETCH_SOURCES, FetchError, fetch_any, parse_id_list
+from modules.uniprot_batch import uniprot_batch_preview, uniprot_batch_sidebar
 from modules.dna import dna_translation_section
 from modules.export import build_session_zip, has_results
 from modules.msa import msa_section
@@ -122,15 +123,19 @@ def handle_input(input_format):
                                        lambda: parse_sequences_from_text(seq_text))
     elif input_format == "Fetch by ID":
         source = st.sidebar.selectbox("Database", FETCH_SOURCES, key="fetch_source")
-        ids_text = st.sidebar.text_input("ID(s)", key="fetch_ids",
-                                         placeholder="e.g. P69905, P68871  or  1CRN",
-                                         help="Separate several IDs with commas or spaces.")
-        if st.sidebar.button("Fetch", key="fetch_button", icon=":material/cloud_download:"):
-            try:
-                with st.spinner(f"Fetching from {source}..."):
-                    st.session_state.fetched = fetch_any(source, parse_id_list(ids_text))
-            except FetchError as e:
-                st.sidebar.error(str(e))
+        if source == "UniProt batch":
+            uniprot_batch_sidebar()
+            uniprot_batch_preview()
+        else:
+            ids_text = st.sidebar.text_input("ID(s)", key="fetch_ids",
+                                             placeholder="e.g. P69905, P68871  or  1CRN",
+                                             help="Separate several IDs with commas or spaces.")
+            if st.sidebar.button("Fetch", key="fetch_button", icon=":material/cloud_download:"):
+                try:
+                    with st.spinner(f"Fetching from {source}..."):
+                        st.session_state.fetched = fetch_any(source, parse_id_list(ids_text))
+                except FetchError as e:
+                    st.sidebar.error(str(e))
         fetched = st.session_state.get("fetched")
         if fetched:
             result, error = _load_once(("fetch", fetched.digest), lambda: _load_fetched(fetched))
@@ -187,7 +192,8 @@ Align, compare and annotate **DNA** or **protein** sequences and structures.
 3. **Pick an analysis** and adjust its settings.
 4. **Run** it and **download** the results.
 
-Use **Fetch by ID** to pull sequences or structures from UniProt, NCBI, PDB or AlphaFold DB. Structures open in
+Use **Fetch by ID** to pull sequences or structures from UniProt, NCBI, PDB or AlphaFold DB; **UniProt batch**
+looks up hundreds of accessions, a UniProt search query, or gene names in one organism at once. Structures open in
 the **Structure Viewer** (Mol*), and the **Show on structure** panels map mutations and conservation onto them.
 
 Pairwise alignments support Global, Local and Overlap (free end gaps) modes. MSA uses FAMSA.

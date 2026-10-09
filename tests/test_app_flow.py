@@ -253,3 +253,24 @@ def test_shell_has_sidebar_groups_and_appearance():
     assert "**DATA**" in labels and "**ANALYSIS**" in labels
     assert at.session_state["appearance_palette"] == "Lab teal"
     assert [m.label for m in at.metric][:4] == ["Sequences", "Type", "Length range", "Median length"]
+
+def test_uniprot_batch_preview_and_load(monkeypatch):
+    import pandas as pd
+    import modules.uniprot_batch as ub
+    frame = pd.DataFrame({"Accession": ["P69905", "P68871"], "Entry name": ["HBA_HUMAN", "HBB_HUMAN"],
+                          "Protein": ["Hb alpha", "Hb beta"], "Gene": ["HBA1", "HBB"],
+                          "Organism": ["Human", "Human"], "Length": [142, 147]})
+    monkeypatch.setattr(ub, "uniprot_batch_tsv", lambda acc, names: (frame, ["Q00000"]))
+    monkeypatch.setattr(ub, "fetch_uniprot_fasta", lambda accs: "".join(
+        f">sp|{a}|X_HUMAN x\nMVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSFPTTK\n" for a in accs))
+    at = AppTest.from_file("app.py", default_timeout=60)
+    at.run()
+    at.selectbox(key="input_format").select("Fetch by ID").run()
+    at.selectbox(key="fetch_source").select("UniProt batch").run()
+    at.text_area(key="uniprot_ids").input("P69905 P68871 Q00000").run()
+    at.button(key="uniprot_search").click().run()
+    assert not at.exception
+    assert any("Q00000" in w.value for w in at.warning)
+    at.button(key="uniprot_load").click().run()
+    assert not at.exception
+    assert at.metric[0].value == "2"
