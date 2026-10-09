@@ -3,7 +3,7 @@ import pytest
 
 from modules.msa_colors import (CLUSTALX_COLOURS, CONSERVATION_RAMP, HYDRO_RAMP, IDENTITY_SHADES, SCHEMES, WHITE,
                                 color_alignment)
-from modules.viz import msa_viewer_figure, reference_numbering
+from modules.viz import _text_colour, msa_viewer_figure, reference_numbering
 
 
 def colour_of(coloring, row, col):
@@ -69,6 +69,15 @@ def test_viewer_window_and_reference_ruler():
                             conservation=np.ones(len(seqs[0])), consensus="x" * len(seqs[0]))
     heat = next(t for t in fig.data if t.type == "heatmap")
     assert np.array(heat.z).shape == (3, 40) and list(heat.y) == ["consensus", "a", "b"]
-    assert heat.texttemplate == "%{text}"
+    letters = next(t for t in fig.data if t.type == "scatter" and t.mode == "text")
+    assert len(letters.text) == 3 * 40 and len(letters.textfont.color) == 3 * 40
+    assert all(c in ("#ffffff", "#1a1a1a") for c in letters.textfont.color)
     ticks = fig.layout.xaxis2.ticktext
     assert all(int(t) % 10 == 0 for t in ticks)
+
+
+def test_text_colour_contrasts_with_background():
+    assert _text_colour("#134e4a") == "#ffffff"
+    assert _text_colour("#0000ff") == "#ffffff"
+    assert _text_colour("#ffffff") == "#1a1a1a"
+    assert _text_colour("#ccccff") == "#1a1a1a"

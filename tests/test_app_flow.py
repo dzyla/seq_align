@@ -494,3 +494,14 @@ def test_msa_jump_does_not_lock_start_slider():
     at.slider(key="msa_view_start").set_value(10).run()
     assert not at.exception
     assert at.slider(key="msa_view_start").value == 10 and jumped != 10
+
+
+def test_msa_start_column_kept_across_width_changes():
+    at = _load_globins_msa()
+    next(w for w in at.get("button_group") if w.key == "msa_view_mode").set_value("Sequence viewer").run()
+    at.slider(key="msa_view_width").set_value(40).run()
+    at.slider(key="msa_view_start").set_value(70).run()
+    at.slider(key="msa_view_width").set_value(80).run()
+    assert not at.exception and at.slider(key="msa_view_start").value == 70
+    at.slider(key="msa_view_width").set_value(150).run()
+    assert not at.exception and at.slider(key="msa_view_start").value == 70

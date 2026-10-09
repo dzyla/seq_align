@@ -6,7 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 from matplotlib.colors import ListedColormap
-from modules.msa_colors import DESCRIPTIONS, SCHEMES, color_alignment
+from modules.msa_colors import DESCRIPTIONS, SCHEMES, Coloring, color_alignment
 from modules.ui import show_plotly
 
 ALPHABET = "-ACDEFGHIKLMNPQRSTVWYXBZJOU*"
@@ -146,20 +146,27 @@ def render_msa_png(codes, ids, seq_type, scheme=None, reference=0):
     return buf.getvalue()
 
 
+@st.cache_data(max_entries=8, show_spinner=False)
+def _cached_coloring(seqs, scheme, seq_type, reference):
+    """(index, colors, legend) of color_alignment, cached on the alignment content and the scheme."""
+    coloring = color_alignment(list(seqs), scheme, seq_type, reference)
+    return coloring.index, coloring.colors, coloring.legend
+
+
 def plot_msa(codes, ids, method="Plotly (Interactive)", seq_type="Protein", scheme=None, reference=0):
     """Show an MSA heatmap sized to the alignment, plus a PNG download. `scheme` is an msa_colors scheme name."""
     if codes.size == 0:
         st.error("No alignment to plot.")
         return
     mode = render_mode(codes.shape[0], codes.shape[1], method)
-    coloring = color_alignment(["".join(r) for r in codes_to_letters(codes)], scheme, seq_type, reference) \
-        if scheme else None
     png = render_msa_png(codes, tuple(ids), seq_type, scheme, reference)
     if mode == "static":
         if not method.startswith("Matplotlib"):
             st.info("Alignment is too large for the interactive view; showing a static image.")
         st.image(png, width="stretch")
     else:
+        coloring = Coloring(*_cached_coloring(tuple("".join(r) for r in codes_to_letters(codes)), scheme, seq_type,
+                                              reference)) if scheme else None
         show_plotly(msa_figure_plotly(codes, ids, seq_type, hover=mode == "interactive_hover", coloring=coloring),
                     width="stretch")
     st.download_button("Download MSA Heatmap (PNG)", data=png, file_name="msa_heatmap.png",
@@ -177,6 +184,15 @@ def reference_numbering(ref_aligned):
         k += c not in "-."
         numbers.append(k if c not in "-." else None)
     return numbers
+
+
+def _text_colour(hex_colour):
+    """Dark or white letter colour, whichever contrasts more with the WCAG relative luminance of the background."""
+    h = hex_colour.lstrip("#")
+    lin = [(c / 12.92) if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+           for c in (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))]
+    luminance = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    return "#ffffff" if luminance < 0.45 else "#1a1a1a"
 
 
 def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservation, consensus):
@@ -199,10 +215,15 @@ def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservat
                          hovertemplate="Column %{x}: conservation %{y:.2f}<extra></extra>"), row=1, col=1)
     fig.add_trace(go.Heatmap(z=z, x=cols + 1, y=rows, colorscale=_discrete_colorscale(coloring.colors),
                              zmin=-0.5, zmax=k - 0.5, showscale=False, text=text, customdata=refpos,
-                             texttemplate="%{text}", textfont=dict(size=11, color="#1a1a1a",
-                                                                   family="IBM Plex Mono, monospace"),
                              xgap=1, ygap=1,
                              hovertemplate="%{y}<br>Column %{x} (reference %{customdata})<br>%{text}<extra></extra>"),
+                  row=2, col=1)
+    # letters sit on their own trace so each one can contrast with its cell's background
+    background = np.asarray(coloring.colors, dtype=object)[z]
+    fig.add_trace(go.Scatter(x=np.tile(cols + 1, len(rows)), y=np.repeat(rows, len(cols)), mode="text",
+                             text=text.ravel(), hoverinfo="skip", showlegend=False,
+                             textfont=dict(size=11, family="IBM Plex Mono, monospace",
+                                           color=[_text_colour(c) for c in background.ravel()])),
                   row=2, col=1)
     ticks = [c + 1 for c in cols if ref_numbers[c] is not None and ref_numbers[c] % 10 == 0]
     fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=[str(ref_numbers[t - 1]) for t in ticks],
@@ -222,6 +243,7 @@ def _jump_to_residue(ref_numbers, n_cols):
     width = st.session_state.get("msa_view_width", VIEWER_WIDTHS[2])
     target = next((c for c, n in enumerate(ref_numbers) if n == jump), 0)
     st.session_state.msa_view_start = max(1, min(n_cols - width + 1, target + 1 - width // 2))
+    st.session_state.msa_view_jump = 0  # so the same residue can be jumped to again
 
 
 def alignment_view(pairs, seq_type, plot_method, reference_id):
@@ -242,7 +264,7 @@ def alignment_view(pairs, seq_type, plot_method, reference_id):
     if mode == "Overview heatmap":
         plot_msa(codes, ids, plot_method, seq_type, scheme, reference)
         return
-    coloring = color_alignment(seqs, scheme, seq_type, reference)
+    coloring = Coloring(*_cached_coloring(tuple(seqs), scheme, seq_type, reference))
     ref_numbers = reference_numbering(seqs[reference])
     lo, hi, default = VIEWER_WIDTHS
     c1, c2, c3 = st.columns([1, 2, 1])
@@ -251,8 +273,9 @@ def alignment_view(pairs, seq_type, plot_method, reference_id):
     c3.number_input(f"Jump to {ids[reference]} residue", 0, max(n for n in ref_numbers if n) if any(ref_numbers)
                     else 0, 0, key="msa_view_jump", help="0 keeps the slider position.",
                     on_change=_jump_to_residue, args=(ref_numbers, n_cols))
-    start = c2.slider("Start column", 1, max(1, n_cols - width + 1) if n_cols > width else 1,
-                      key="msa_view_start") if n_cols > width else 1
+    # the slider range does not depend on the width; the window is clamped so it always ends at the last column
+    start = c2.slider("Start column", 1, n_cols, key="msa_view_start") if n_cols > 1 else 1
+    start = min(start, max(1, n_cols - width + 1))
     rows = np.arange(len(ids))
     if len(ids) > VIEWER_MAX_ROWS:
         first = st.slider("First sequence", 1, len(ids) - VIEWER_MAX_ROWS + 1, 1, key="msa_view_row")
@@ -260,6 +283,6 @@ def alignment_view(pairs, seq_type, plot_method, reference_id):
     conservation = column_conservation(seqs, seq_type)
     consensus = consensus_line(seqs, column_classes(seqs, 0.7, seq_type))
     # column statistics come from the whole alignment; a row window only slices the colouring
-    sub = type(coloring)(coloring.index[rows], coloring.colors, coloring.legend)
+    sub = Coloring(coloring.index[rows], coloring.colors, coloring.legend)
     show_plotly(msa_viewer_figure(codes[rows], [ids[r] for r in rows], sub, start - 1, width, ref_numbers,
                                   conservation, consensus), width="stretch")
