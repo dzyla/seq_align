@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add two pages to seq_align: a **Coevolution** page and an **Ancestral Reconstruction** page. Both must work on Streamlit Cloud.
+**Goal:** Add two pages to seq_align, a **Coevolution** page and an **Ancestral Reconstruction** page, plus MSA colour schemes and a sequence viewer (Task 5). Everything must work on Streamlit Cloud.
 
 **Coevolution page:**
 - Computes plmDCA or mean-field DCA contacts from the current dataset or from an uploaded ColabFold `.a3m`, Stockholm or aligned-FASTA file.
@@ -1661,3 +1661,600 @@ Expected: all green, about 476 passed and 2 skipped.
 git add modules/ancestral_page.py modules/navigation.py app.py tests/test_navigation.py tests/test_app_flow.py packages.txt .github/workflows/tests.yml README.md
 git commit -m "feat: Ancestral Reconstruction page; iqtree for Streamlit Cloud and CI; README"
 ```
+
+---
+
+### Task 5: MSA colour schemes and sequence viewer
+
+Added on 2026-10-09 at the owner's request.
+- "Colour schemes" means Jalview-style ClustalX, Zappo, Taylor, hydrophobicity, percent identity, conservation and similarity to the reference.
+- "Sequence viewer" means a column window with letters, a conservation track, a consensus row and a reference ruler, built on Plotly so no JavaScript component is needed.
+- Prototype-verified: 459 passed and precommit passed on this branch's base. The static renders of ClustalX, percent identity, conservation and similarity were inspected.
+
+**Files:**
+- Create: `modules/msa_colors.py`
+- Modify: `modules/viz.py` (colouring support, viewer, `alignment_view`), `modules/msa.py` (the first tab uses `alignment_view`)
+- Test: `tests/test_msa_colors.py`, `tests/test_app_flow.py` (append)
+
+**Interfaces:**
+- Consumes:
+  - `modules.conservation.column_conservation`
+  - `modules.espript.column_classes` and `consensus_line` (Plan 08)
+  - `modules.pairwise.load_matrix`
+  - `modules.ui.show_plotly`
+- Produces:
+  - In `modules/msa_colors.py`:
+    - Constants: `SCHEMES` (Protein: Residue, ClustalX, Zappo, Taylor, Hydrophobicity, Percent identity, Conservation, Similarity to reference; DNA: Nucleotide, Percent identity, Conservation, Similarity to reference), `DESCRIPTIONS`, `CLUSTALX_COLOURS`, `IDENTITY_SHADES`, `CONSERVATION_RAMP`, `HYDRO_RAMP`, `WHITE`
+    - `Coloring(index, colors, legend)`
+    - `color_alignment(seqs, scheme, seq_type="Protein", reference=0) -> Coloring`
+  - In `modules/viz.py`:
+    - `msa_figure_plotly(..., coloring=None)` and `msa_figure_matplotlib(..., coloring=None)`
+    - `render_msa_png(codes, ids, seq_type, scheme=None, reference=0)`
+    - `plot_msa(codes, ids, method, seq_type, scheme=None, reference=0)`, which stays backward compatible (clustering still calls it without a scheme)
+    - `reference_numbering(ref_aligned)`
+    - `msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservation, consensus)`
+    - `alignment_view(pairs, seq_type, plot_method, reference_id)`
+- Widget keys: `msa_view_mode`, `msa_color_scheme`, `msa_view_width`, `msa_view_start`, `msa_view_jump`, `msa_view_row`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/test_msa_colors.py`:
+
+```python
+import numpy as np
+import pytest
+
+from modules.msa_colors import (CLUSTALX_COLOURS, CONSERVATION_RAMP, HYDRO_RAMP, IDENTITY_SHADES, SCHEMES, WHITE,
+                                color_alignment)
+from modules.viz import msa_viewer_figure, reference_numbering
+
+
+def colour_of(coloring, row, col):
+    return coloring.colors[coloring.index[row, col]]
+
+
+def column(seqs_column):
+    """Rows of a one-column alignment."""
+    return list(seqs_column)
+
+
+def test_clustalx_rules():
+    c = color_alignment(column("GGGG"), "ClustalX")
+    assert colour_of(c, 0, 0) == CLUSTALX_COLOURS["ORANGE"]               # glycine always orange
+    c = color_alignment(column("LLLLLLLKKK"), "ClustalX")
+    assert colour_of(c, 0, 0) == CLUSTALX_COLOURS["BLUE"]                 # 70% hydrophobic
+    assert colour_of(c, 9, 0) == WHITE                                    # K: KR only 30%
+    assert colour_of(color_alignment(column("CCCC"), "ClustalX"), 0, 0) == CLUSTALX_COLOURS["PINK"]
+    c = color_alignment(column("KKKKKKKAAA"), "ClustalX")
+    assert colour_of(c, 0, 0) == CLUSTALX_COLOURS["RED"] and colour_of(c, 9, 0) == WHITE
+    c = color_alignment(column("NNNNNNDDDD"), "ClustalX")
+    assert colour_of(c, 0, 0) == CLUSTALX_COLOURS["GREEN"]                # N > 50%
+    assert colour_of(color_alignment(column("--"), "ClustalX"), 0, 0) == WHITE
+
+
+def test_percent_identity_shades():
+    for seqs, expected in (("AAAAAAAAAL", IDENTITY_SHADES[0][1]), ("AAAAAAALLV", IDENTITY_SHADES[1][1]),
+                           ("AAAAALLVVW", IDENTITY_SHADES[2][1]), ("AAAALLLVVW", WHITE)):
+        c = color_alignment(column(seqs), "Percent identity")
+        assert colour_of(c, 0, 0) == expected, seqs
+    c = color_alignment(column("AAAAAAAAAL"), "Percent identity")
+    assert colour_of(c, 9, 0) == WHITE                                    # non-consensus residue stays white
+
+
+def test_conservation_and_similarity():
+    c = color_alignment(["MK-", "MKA", "MRA", "MRG"], "Conservation")
+    assert colour_of(c, 0, 0) == CONSERVATION_RAMP[-1]                    # invariant column
+    assert colour_of(c, 0, 2) == WHITE                                    # gap
+    c = color_alignment(["LLD-", "ILDA", "DLDA"], "Similarity to reference", reference=1)
+    assert [colour_of(c, 1, j) for j in range(3)] == [c.colors[1]] * 3    # reference identical to itself
+    assert colour_of(c, 0, 0) == c.colors[2] and colour_of(c, 2, 0) == c.colors[3]   # L~I similar, D vs I not
+    assert colour_of(c, 0, 3) == WHITE                                    # gap
+
+
+def test_hydrophobicity_and_schemes_list():
+    c = color_alignment(["IR"], "Hydrophobicity")
+    assert colour_of(c, 0, 0) == HYDRO_RAMP[-1] and colour_of(c, 0, 1) == HYDRO_RAMP[0]
+    for seq_type, schemes in SCHEMES.items():
+        for scheme in schemes:
+            c = color_alignment(["ACGT-", "ACGA-"] if seq_type == "DNA" else ["MKV-L", "MRVAL"], scheme, seq_type)
+            assert c.index.shape == (2, 5) and c.index.max() < len(c.colors)
+    with pytest.raises(ValueError):
+        color_alignment(["A"], "Rainbow")
+
+
+def test_viewer_window_and_reference_ruler():
+    seqs = ["M-KVLAAGIVGLLAQWERTYASDFGKLCV" * 2, "MKKVLAAGIVGLLAQWERTYASDFGKLCV" * 2]
+    from modules.viz import alignment_to_codes
+    ref_numbers = reference_numbering(seqs[0])
+    assert ref_numbers[:3] == [1, None, 2]
+    coloring = color_alignment(seqs, "ClustalX")
+    fig = msa_viewer_figure(alignment_to_codes(seqs), ["a", "b"], coloring, start=5, width=40, ref_numbers=ref_numbers,
+                            conservation=np.ones(len(seqs[0])), consensus="x" * len(seqs[0]))
+    heat = next(t for t in fig.data if t.type == "heatmap")
+    assert np.array(heat.z).shape == (3, 40) and list(heat.y) == ["consensus", "a", "b"]
+    assert heat.texttemplate == "%{text}"
+    ticks = fig.layout.xaxis2.ticktext
+    assert all(int(t) % 10 == 0 for t in ticks)
+```
+
+Append to `tests/test_app_flow.py`:
+
+```python
+def test_msa_colour_schemes_and_sequence_viewer():
+    at = _load_globins_msa()
+    for scheme in ("ClustalX", "Percent identity", "Conservation", "Similarity to reference", "Zappo"):
+        at.selectbox(key="msa_color_scheme").set_value(scheme).run()
+        assert not at.exception, (scheme, at.exception)
+    next(w for w in at.get("button_group") if w.key == "msa_view_mode").set_value("Sequence viewer").run()
+    assert not at.exception
+    at.number_input(key="msa_view_jump").set_value(60).run()
+    assert not at.exception
+    at.slider(key="msa_view_width").set_value(120).run()
+    assert not at.exception
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `PATH=/home/dzyla/miniconda3/bin:$PATH .venv/bin/python -m pytest tests/test_msa_colors.py tests/test_app_flow.py::test_msa_colour_schemes_and_sequence_viewer -q`
+Expected: FAIL with `ModuleNotFoundError: No module named 'modules.msa_colors'`, and there is no `msa_color_scheme` widget.
+
+- [ ] **Step 3: Create `modules/msa_colors.py`**
+
+```python
+"""MSA colour schemes (Jalview-style): each maps an alignment to a per-cell colour index, a colour list and a
+legend. Pure functions, shared by the overview heatmap, the sequence viewer and the static PNG."""
+from dataclasses import dataclass
+
+import numpy as np
+
+GAP_CHARS = "-."
+WHITE = "#ffffff"
+SCHEMES = {
+    "Protein": ("Residue", "ClustalX", "Zappo", "Taylor", "Hydrophobicity", "Percent identity", "Conservation",
+                "Similarity to reference"),
+    "DNA": ("Nucleotide", "Percent identity", "Conservation", "Similarity to reference"),
+}
+DESCRIPTIONS = {
+    "Residue": "Every residue type in its usual Clustal colour, regardless of the column.",
+    "ClustalX": "Jalview's ClustalX rules: a residue is coloured only when its column's composition supports it.",
+    "Zappo": "Physicochemical groups.",
+    "Taylor": "A distinct colour for every amino acid (Taylor 1997).",
+    "Hydrophobicity": "Kyte-Doolittle scale: blue hydrophilic to red hydrophobic.",
+    "Percent identity": "Residues matching their column's most common residue, shaded by how many sequences share it.",
+    "Conservation": "Every residue shaded by its column's conservation (1 - entropy); gap-rich columns blank.",
+    "Similarity to reference": "Identical to the reference, similar (BLOSUM62 > 0) or different.",
+    "Nucleotide": "A, C, G and T/U in their usual colours.",
+}
+
+RESIDUE = {**dict.fromkeys("AILMFWV", "#80a0f0"), "C": "#f08080", **dict.fromkeys("KR", "#f01505"),
+           **dict.fromkeys("DE", "#c048c0"), **dict.fromkeys("NQST", "#15c015"), "G": "#f09048", "P": "#c0c000",
+           **dict.fromkeys("HY", "#15a4a4")}
+NUCLEOTIDE = {"A": "#64f73f", "C": "#ffb340", "G": "#eb413c", "T": "#3c88ee", "U": "#3c88ee"}
+ZAPPO = {**dict.fromkeys("ILVAM", "#ffafaf"), **dict.fromkeys("FWY", "#ffc800"), **dict.fromkeys("KRH", "#6464ff"),
+         **dict.fromkeys("DE", "#ff0000"), **dict.fromkeys("STNQ", "#00ff00"), **dict.fromkeys("PG", "#ff00ff"),
+         "C": "#ffff00"}
+ZAPPO_LEGEND = [("Aliphatic ILVAM", "#ffafaf"), ("Aromatic FWY", "#ffc800"), ("Positive KRH", "#6464ff"),
+                ("Negative DE", "#ff0000"), ("Hydrophilic STNQ", "#00ff00"), ("Conformational PG", "#ff00ff"),
+                ("Cysteine C", "#ffff00")]
+TAYLOR = {"A": "#ccff00", "R": "#0000ff", "N": "#cc00ff", "D": "#ff0000", "C": "#ffff00", "Q": "#ff00cc",
+          "E": "#ff0066", "G": "#ff9900", "H": "#0066ff", "I": "#66ff00", "L": "#33ff00", "K": "#6600ff",
+          "M": "#00ff00", "F": "#00ff66", "P": "#ffcc00", "S": "#ff3300", "T": "#ff6600", "W": "#00ccff",
+          "Y": "#00ffcc", "V": "#99ff00"}
+KYTE_DOOLITTLE = {"I": 4.5, "V": 4.2, "L": 3.8, "F": 2.8, "C": 2.5, "M": 1.9, "A": 1.8, "G": -0.4, "T": -0.7,
+                  "S": -0.8, "W": -0.9, "Y": -1.3, "P": -1.6, "H": -3.2, "E": -3.5, "Q": -3.5, "D": -3.5,
+                  "N": -3.5, "K": -3.9, "R": -4.5}
+HYDRO_RAMP = ("#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f7f7f7", "#fddbc7", "#f4a582", "#d6604d", "#b2182b")
+IDENTITY_SHADES = ((0.8, "#6464ff", "> 80%"), (0.6, "#9999ff", "> 60%"), (0.4, "#ccccff", "> 40%"))
+CONSERVATION_RAMP = ("#f0fdfa", "#ccfbf1", "#99f6e4", "#5eead4", "#2dd4bf", "#14b8a6", "#0d9488", "#0f766e",
+                     "#115e59", "#134e4a")
+SIMILARITY = (("Identical", "#5fb8a8"), ("Similar (BLOSUM62 > 0)", "#cde9e3"), ("Different", "#f6c9c4"))
+
+# Jalview ClustalX colours and rules: (colour, residues coloured, [(threshold, group, combined?)])
+# A "combined" group means the summed fraction of its residues; otherwise any single residue of the group.
+CLUSTALX_COLOURS = {"BLUE": "#80a0f0", "RED": "#f01505", "MAGENTA": "#c048c0", "GREEN": "#15c015",
+                    "PINK": "#f08080", "ORANGE": "#f09048", "YELLOW": "#c0c000", "CYAN": "#15a4a4"}
+HYDROPHOBIC = "WLVIMAFCHP"
+CLUSTALX_RULES = [
+    ("PINK", "C", [(0.85, "C", True)]),
+    ("BLUE", "AILMFWVC", [(0.60, HYDROPHOBIC, True)]),
+    ("RED", "KR", [(0.60, "KR", True), (0.80, "KRQ", False)]),
+    ("MAGENTA", "E", [(0.60, "KR", True), (0.50, "QE", True), (0.50, "ED", True), (0.85, "EQD", False)]),
+    ("MAGENTA", "D", [(0.60, "KR", True), (0.85, "KRQ", False), (0.50, "ED", True)]),
+    ("GREEN", "N", [(0.50, "N", True), (0.85, "NY", False)]),
+    ("GREEN", "Q", [(0.60, "KR", True), (0.50, "QE", True), (0.85, "QEKR", False)]),
+    ("GREEN", "ST", [(0.60, HYDROPHOBIC, True), (0.50, "TS", True), (0.85, "ST", False)]),
+    ("ORANGE", "G", [(0.0, "G", True)]),
+    ("YELLOW", "P", [(0.0, "P", True)]),
+    ("CYAN", "HY", [(0.60, HYDROPHOBIC, True), (0.85, "WYACPQFHILMV", False)]),
+]
+CLUSTALX_LEGEND = [("Hydrophobic", "#80a0f0"), ("Positive", "#f01505"), ("Negative", "#c048c0"),
+                   ("Polar", "#15c015"), ("Cysteine", "#f08080"), ("Glycine", "#f09048"), ("Proline", "#c0c000"),
+                   ("Aromatic", "#15a4a4"), ("Not conserved", WHITE)]
+
+
+@dataclass
+class Coloring:
+    index: np.ndarray        # uint8 N x L: index into colors (0 = white)
+    colors: list             # hex colours; colors[0] is white
+    legend: list             # [(label, hex)]
+
+
+def _letters(seqs):
+    return np.array([list(s.upper()) for s in seqs]) if seqs else np.zeros((0, 0), dtype="<U1")
+
+
+def _from_lookup(letters, lookup, legend):
+    colors = [WHITE] + sorted(set(lookup.values()) - {WHITE})
+    pos = {c: k for k, c in enumerate(colors)}
+    table = np.zeros(256, dtype=np.uint8)
+    for residue, color in lookup.items():
+        table[ord(residue)] = pos[color]
+    codes = np.frombuffer("".join("".join(r) for r in letters).encode("ascii", "replace"), dtype=np.uint8)
+    return Coloring(table[codes].reshape(letters.shape), colors, legend)
+
+
+def _rule_met(fraction, threshold, group, combined):
+    if combined:
+        return sum(fraction.get(r, 0.0) for r in group) > threshold
+    return any(fraction.get(r, 0.0) > threshold for r in group)
+
+
+def clustalx_colors(letters):
+    n, L = letters.shape
+    colors = [WHITE] + list(dict.fromkeys(CLUSTALX_COLOURS.values()))
+    pos = {c: k for k, c in enumerate(colors)}
+    index = np.zeros((n, L), dtype=np.uint8)
+    for j in range(L):
+        column = letters[:, j]
+        residues, counts = np.unique(column, return_counts=True)
+        fraction = {r: c / n for r, c in zip(residues, counts) if r not in GAP_CHARS}
+        for residue in fraction:
+            color = None
+            for name, applies_to, conditions in CLUSTALX_RULES:
+                if residue in applies_to and any(_rule_met(fraction, t, g, comb) for t, g, comb in conditions):
+                    color = CLUSTALX_COLOURS[name]
+                    break
+            if color:
+                index[column == residue, j] = pos[color]
+    return Coloring(index, colors, CLUSTALX_LEGEND)
+
+
+def percent_identity_colors(letters):
+    n, L = letters.shape
+    colors = [WHITE] + [c for _, c, _ in IDENTITY_SHADES]
+    index = np.zeros((n, L), dtype=np.uint8)
+    for j in range(L):
+        column = letters[:, j]
+        residues = [r for r in column if r not in GAP_CHARS]
+        if not residues:
+            continue
+        values, counts = np.unique(residues, return_counts=True)
+        top = values[np.argmax(counts)]
+        frac = counts.max() / n
+        shade = next((k + 1 for k, (t, _, _) in enumerate(IDENTITY_SHADES) if frac > t), 0)
+        index[column == top, j] = shade
+    return Coloring(index, colors, [(label, c) for _, c, label in IDENTITY_SHADES])
+
+
+def conservation_colors(letters, seq_type):
+    from modules.conservation import column_conservation  # local: keeps viz importable without the MSA stack
+
+    scores = column_conservation(["".join(r) for r in letters], seq_type)
+    colors = [WHITE] + list(CONSERVATION_RAMP)
+    bins = np.where(np.isnan(scores), -1, np.minimum((np.nan_to_num(scores) * 10).astype(int), 9))
+    index = np.zeros(letters.shape, dtype=np.uint8)
+    residue = ~np.isin(letters, list(GAP_CHARS))
+    for j, b in enumerate(bins):
+        if b >= 0:
+            index[residue[:, j], j] = b + 1
+    legend = [("Low conservation", CONSERVATION_RAMP[0]), ("High conservation", CONSERVATION_RAMP[-1])]
+    return Coloring(index, colors, legend)
+
+
+def similarity_colors(letters, reference_row, seq_type):
+    from modules.pairwise import load_matrix
+
+    colors = [WHITE] + [c for _, c in SIMILARITY]
+    codes = np.frombuffer("".join("".join(r) for r in letters).encode("ascii", "replace"),
+                          dtype=np.uint8).reshape(letters.shape)
+    ref = codes[reference_row][None, :]
+    gap = np.isin(codes, [ord(c) for c in GAP_CHARS]) | np.isin(ref, [ord(c) for c in GAP_CHARS])
+    similar = np.zeros((256, 256), dtype=bool)
+    if seq_type == "Protein":
+        blosum = load_matrix("BLOSUM62")
+        for a in blosum.alphabet:
+            for b in blosum.alphabet:
+                if a != "*" and b != "*" and blosum[a][b] > 0:
+                    similar[ord(a), ord(b)] = True
+    index = np.where(codes == ref, 1, np.where(similar[codes, np.broadcast_to(ref, codes.shape)], 2, 3))
+    index[gap] = 0
+    return Coloring(index.astype(np.uint8), colors, list(SIMILARITY))
+
+
+def hydrophobicity_colors(letters):
+    lookup = {r: HYDRO_RAMP[min(8, int((v + 4.5) / 9.0 * 9))] for r, v in KYTE_DOOLITTLE.items()}
+    return _from_lookup(letters, lookup, [("Hydrophilic", HYDRO_RAMP[0]), ("Hydrophobic", HYDRO_RAMP[-1])])
+
+
+def color_alignment(seqs, scheme, seq_type="Protein", reference=0):
+    """Coloring for aligned sequences under a scheme (see SCHEMES); `reference` is a row index."""
+    letters = _letters(seqs)
+    if letters.size == 0:
+        return Coloring(np.zeros((0, 0), dtype=np.uint8), [WHITE], [])
+    if scheme == "Residue":
+        return _from_lookup(letters, RESIDUE, CLUSTALX_LEGEND[:-1])
+    if scheme == "Nucleotide":
+        return _from_lookup(letters, NUCLEOTIDE, [("A", NUCLEOTIDE["A"]), ("C", NUCLEOTIDE["C"]),
+                                                  ("G", NUCLEOTIDE["G"]), ("T/U", NUCLEOTIDE["T"])])
+    if scheme == "ClustalX":
+        return clustalx_colors(letters)
+    if scheme == "Zappo":
+        return _from_lookup(letters, ZAPPO, ZAPPO_LEGEND)
+    if scheme == "Taylor":
+        return _from_lookup(letters, TAYLOR, [])
+    if scheme == "Hydrophobicity":
+        return hydrophobicity_colors(letters)
+    if scheme == "Percent identity":
+        return percent_identity_colors(letters)
+    if scheme == "Conservation":
+        return conservation_colors(letters, seq_type)
+    if scheme == "Similarity to reference":
+        return similarity_colors(letters, reference, seq_type)
+    raise ValueError(f"Unknown colour scheme {scheme!r}")
+```
+
+- [ ] **Step 4: Viewer and colouring in `modules/viz.py`; use it in `modules/msa.py`**
+
+Save each diff to a file and `git apply` it from the repository root. Tasks 1–4 do not touch these files, so the diffs apply cleanly.
+
+```diff
+diff --git a/modules/viz.py b/modules/viz.py
+index e5861bb..3e57c42 100644
+--- a/modules/viz.py
++++ b/modules/viz.py
+@@ -6,6 +6,7 @@ import numpy as np
+ import plotly.graph_objects as go
+ import streamlit as st
+ from matplotlib.colors import ListedColormap
++from modules.msa_colors import DESCRIPTIONS, SCHEMES, color_alignment
+ from modules.ui import show_plotly
+ 
+ ALPHABET = "-ACDEFGHIKLMNPQRSTVWYXBZJOU*"
+@@ -66,13 +67,20 @@ def render_mode(n_rows, n_cols, method):
+     return "interactive_hover" if cells <= HOVER_LIMIT else "interactive"
+ 
+ 
+-def msa_figure_plotly(codes, ids, seq_type, hover=True):
+-    colors = palette(seq_type)
++def _discrete_colorscale(colors):
+     k = len(colors)
+-    colorscale = []
++    scale = []
+     for i, color in enumerate(colors):
+-        colorscale += [[i / k, color], [(i + 1) / k, color]]
+-    heatmap = dict(z=codes, x=np.arange(1, codes.shape[1] + 1), y=list(ids), colorscale=colorscale,
++        scale += [[i / k, color], [(i + 1) / k, color]]
++    return scale
++
++
++def msa_figure_plotly(codes, ids, seq_type, hover=True, coloring=None):
++    """Overview heatmap; `coloring` (msa_colors.Coloring) overrides the per-residue palette."""
++    colors = coloring.colors if coloring is not None else palette(seq_type)
++    z = coloring.index if coloring is not None else codes
++    k = len(colors)
++    heatmap = dict(z=z, x=np.arange(1, codes.shape[1] + 1), y=list(ids), colorscale=_discrete_colorscale(colors),
+                    zmin=-0.5, zmax=k - 0.5, showscale=False)
+     if hover:
+         heatmap["text"] = codes_to_letters(codes)
+@@ -93,13 +101,14 @@ def msa_figure_plotly(codes, ids, seq_type, hover=True):
+     return fig
+ 
+ 
+-def msa_figure_matplotlib(codes, ids, seq_type):
+-    colors = palette(seq_type)
++def msa_figure_matplotlib(codes, ids, seq_type, coloring=None):
++    colors = coloring.colors if coloring is not None else palette(seq_type)
++    z = coloring.index if coloring is not None else codes
+     k = len(colors)
+     n_rows, n_cols = codes.shape
+     fig, ax = plt.subplots(figsize=(20, max(3.5, min(30, 0.25 * len(ids) + 2))))
+     # extent makes column k (1-based) sit at x=k, matching the Plotly view.
+-    ax.imshow(codes, cmap=ListedColormap(colors), vmin=-0.5, vmax=k - 0.5, aspect="auto",
++    ax.imshow(z, cmap=ListedColormap(colors), vmin=-0.5, vmax=k - 0.5, aspect="auto",
+               interpolation="nearest", extent=(0.5, n_cols + 0.5, n_rows - 0.5, -0.5))
+     ax.set_title("Multiple Sequence Alignment", fontsize=14)
+     ax.set_xlabel("Alignment position", fontsize=12)
+@@ -108,21 +117,27 @@ def msa_figure_matplotlib(codes, ids, seq_type):
+         ax.set_yticklabels(ids, fontsize=8)
+     else:
+         ax.set_ylabel("Sequence", fontsize=12)
+-    # One legend entry per distinct color, labelled with the residues that share it.
+-    groups = {}
+-    for c in np.unique(codes):
+-        groups.setdefault(colors[c], []).append(ALPHABET[c])
+-    handles = [mpatches.Patch(facecolor=color, edgecolor="#999999",
+-                              label="gap" if letters == ["-"] else "".join(letters))
+-               for color, letters in groups.items()]
+-    ax.legend(handles=handles, title="Residues", bbox_to_anchor=(1.01, 1), loc="upper left", borderaxespad=0.)
++    if coloring is not None and coloring.legend:
++        handles = [mpatches.Patch(facecolor=color, edgecolor="#999999", label=label)
++                   for label, color in coloring.legend]
++    else:  # one legend entry per distinct color, labelled with the residues that share it
++        groups = {}
++        for c in np.unique(codes):
++            groups.setdefault(colors[c], []).append(ALPHABET[c])
++        handles = [mpatches.Patch(facecolor=color, edgecolor="#999999",
++                                  label="gap" if letters == ["-"] else "".join(letters))
++                   for color, letters in groups.items()]
++    if handles:
++        ax.legend(handles=handles, title="Colours", bbox_to_anchor=(1.01, 1), loc="upper left", borderaxespad=0.)
+     fig.tight_layout()
+     return fig
+ 
+ 
+ @st.cache_data(max_entries=4, show_spinner=False)
+-def render_msa_png(codes, ids, seq_type):
+-    fig = msa_figure_matplotlib(codes, list(ids), seq_type)
++def render_msa_png(codes, ids, seq_type, scheme=None, reference=0):
++    coloring = color_alignment(["".join(r) for r in codes_to_letters(codes)], scheme, seq_type, reference) \
++        if scheme else None
++    fig = msa_figure_matplotlib(codes, list(ids), seq_type, coloring)
+     buf = BytesIO()
+     try:
+         fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+@@ -131,18 +146,112 @@ def render_msa_png(codes, ids, seq_type):
+     return buf.getvalue()
+ 
+ 
+-def plot_msa(codes, ids, method="Plotly (Interactive)", seq_type="Protein"):
+-    """Show an MSA heatmap sized to the alignment, plus a PNG download."""
++def plot_msa(codes, ids, method="Plotly (Interactive)", seq_type="Protein", scheme=None, reference=0):
++    """Show an MSA heatmap sized to the alignment, plus a PNG download. `scheme` is an msa_colors scheme name."""
+     if codes.size == 0:
+         st.error("No alignment to plot.")
+         return
+     mode = render_mode(codes.shape[0], codes.shape[1], method)
+-    png = render_msa_png(codes, tuple(ids), seq_type)
++    coloring = color_alignment(["".join(r) for r in codes_to_letters(codes)], scheme, seq_type, reference) \
++        if scheme else None
++    png = render_msa_png(codes, tuple(ids), seq_type, scheme, reference)
+     if mode == "static":
+         if not method.startswith("Matplotlib"):
+             st.info("Alignment is too large for the interactive view; showing a static image.")
+         st.image(png, width="stretch")
+     else:
+-        show_plotly(msa_figure_plotly(codes, ids, seq_type, hover=mode == "interactive_hover"), width="stretch")
++        show_plotly(msa_figure_plotly(codes, ids, seq_type, hover=mode == "interactive_hover", coloring=coloring),
++                    width="stretch")
+     st.download_button("Download MSA Heatmap (PNG)", data=png, file_name="msa_heatmap.png",
+                        mime="image/png", on_click="ignore", icon=":material/download:")
++
++
++VIEWER_WIDTHS = (40, 150, 80)      # min, max, default columns in the sequence viewer window
++VIEWER_MAX_ROWS = 120              # rows shown at once; more sequences get a row window
++
++
++def reference_numbering(ref_aligned):
++    """Reference residue number for every alignment column (None where the reference has a gap)."""
++    numbers, k = [], 0
++    for c in ref_aligned:
++        k += c not in "-."
++        numbers.append(k if c not in "-." else None)
++    return numbers
++
++
++def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservation, consensus):
++    """Sequence viewer: a window of columns with letters in every cell, a conservation bar and a consensus row
++    above, the x axis labelled in reference numbering every 10 residues."""
++    from plotly.subplots import make_subplots
++
++    end = min(codes.shape[1], start + width)
++    cols = np.arange(start, end)
++    letters = codes_to_letters(codes[:, start:end])
++    z = coloring.index[:, start:end]
++    k = len(coloring.colors)
++    rows = ["consensus"] + list(ids)
++    z = np.vstack([np.zeros((1, len(cols)), dtype=z.dtype), z])
++    text = np.vstack([np.array(list(consensus[start:end]))[None, :], letters])
++    refpos = np.array([[("" if ref_numbers[c] is None else str(ref_numbers[c])) for c in cols]] * len(rows))
++    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.12, 0.88], vertical_spacing=0.01)
++    cons = np.nan_to_num(conservation[start:end])
++    fig.add_trace(go.Bar(x=cols + 1, y=cons, marker_color="#0f766e", showlegend=False,
++                         hovertemplate="Column %{x}: conservation %{y:.2f}<extra></extra>"), row=1, col=1)
++    fig.add_trace(go.Heatmap(z=z, x=cols + 1, y=rows, colorscale=_discrete_colorscale(coloring.colors),
++                             zmin=-0.5, zmax=k - 0.5, showscale=False, text=text, customdata=refpos,
++                             texttemplate="%{text}", textfont=dict(size=11, color="#1a1a1a",
++                                                                   family="IBM Plex Mono, monospace"),
++                             xgap=1, ygap=1,
++                             hovertemplate="%{y}<br>Column %{x} (reference %{customdata})<br>%{text}<extra></extra>"),
++                  row=2, col=1)
++    ticks = [c + 1 for c in cols if ref_numbers[c] is not None and ref_numbers[c] % 10 == 0]
++    fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=[str(ref_numbers[t - 1]) for t in ticks],
++                     row=2, col=1, title_text="Reference position")
++    fig.update_yaxes(range=[0, 1], showticklabels=False, row=1, col=1)
++    fig.update_yaxes(type="category", autorange="reversed", row=2, col=1)
++    fig.update_layout(height=min(4000, 120 + 22 * len(rows)), margin=dict(l=10, r=10, t=10, b=40),
++                      plot_bgcolor="white", bargap=0.1)
++    return fig
++
++
++def alignment_view(pairs, seq_type, plot_method, reference_id):
++    """MSA tab view: colour scheme + overview heatmap or sequence viewer."""
++    from modules.conservation import column_conservation
++    from modules.espript import column_classes, consensus_line
++
++    ids = [i for i, _ in pairs]
++    seqs = [s for _, s in pairs]
++    c1, c2 = st.columns([1, 1])
++    mode = c1.segmented_control("View", ["Overview heatmap", "Sequence viewer"], default="Overview heatmap",
++                                required=True, key="msa_view_mode")
++    schemes = SCHEMES["DNA" if seq_type == "DNA" else "Protein"]
++    scheme = c2.selectbox("Colour scheme", schemes, key="msa_color_scheme")
++    st.caption(DESCRIPTIONS[scheme])
++    reference = ids.index(reference_id) if reference_id in ids else 0
++    codes = alignment_to_codes(seqs)
++    if mode == "Overview heatmap":
++        plot_msa(codes, ids, plot_method, seq_type, scheme, reference)
++        return
++    coloring = color_alignment(seqs, scheme, seq_type, reference)
++    ref_numbers = reference_numbering(seqs[reference])
++    lo, hi, default = VIEWER_WIDTHS
++    c1, c2, c3 = st.columns([1, 2, 1])
++    width = c1.slider("Columns shown", lo, hi, default, 10, key="msa_view_width")
++    n_cols = codes.shape[1]
++    jump = c3.number_input(f"Jump to {ids[reference]} residue", 0, max(n for n in ref_numbers if n) if any(ref_numbers)
++                           else 0, 0, key="msa_view_jump", help="0 keeps the slider position.")
++    if jump:
++        target = next((c for c, n in enumerate(ref_numbers) if n == jump), 0)
++        st.session_state.msa_view_start = max(1, min(n_cols, target + 1 - width // 2))
++    start = c2.slider("Start column", 1, max(1, n_cols - width + 1) if n_cols > width else 1,
++                      key="msa_view_start") if n_cols > width else 1
++    rows = np.arange(len(ids))
++    if len(ids) > VIEWER_MAX_ROWS:
++        first = st.slider("First sequence", 1, len(ids) - VIEWER_MAX_ROWS + 1, 1, key="msa_view_row")
++        rows = rows[first - 1:first - 1 + VIEWER_MAX_ROWS]
++    conservation = column_conservation(seqs, seq_type)
++    consensus = consensus_line(seqs, column_classes(seqs, 0.7, seq_type))
++    # column statistics come from the whole alignment; a row window only slices the colouring
++    sub = type(coloring)(coloring.index[rows], coloring.colors, coloring.legend)
++    show_plotly(msa_viewer_figure(codes[rows], [ids[r] for r in rows], sub, start - 1, width, ref_numbers,
++                                  conservation, consensus), width="stretch")
+```
+
+```diff
+diff --git a/modules/msa.py b/modules/msa.py
+index b0a1fec..81d4de5 100644
+--- a/modules/msa.py
++++ b/modules/msa.py
+@@ -17,7 +17,7 @@ import pandas as pd
+ from typing import List, Dict, Tuple
+ from modules.alignment_tabs import consensus_tab, figure_tab, motifs_tab
+ from modules.utils import have_params_changed, stale_notice
+-from modules.viz import alignment_to_codes, plot_msa
++from modules.viz import alignment_to_codes, alignment_view
+ from modules.seqtools import clean_sequence, fingerprint
+ from modules.conservation import (
+     CONSERVATION_COLORS, column_conservation, conservation_grade, identity_matrix_frame, logo_figure,
+@@ -118,7 +118,7 @@ def msa_section(sequences, seq_type):
+         st.subheader("MSA result")
+         if not view_empty:
+             st.write(f"Total sequences: {len(view)}. MSA length: {len(view[0][1])}")
+-            plot_msa(alignment_to_codes([s for _, s in view]), [i for i, _ in view], plot_method, seq_type)
++            alignment_view(view, seq_type, plot_method, ref_seq_id)
+             try:
+                 st.download_button(label="Download MSA", data=serialize_alignment(view, msa_output_format),
+                                    file_name=f"msa_alignment.{msa_output_format}", mime="text/plain",
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `PATH=/home/dzyla/miniconda3/bin:$PATH .venv/bin/python -m pytest -q`, then `.venv/bin/python precommit_check.py`.
+Expected: all green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add modules/msa_colors.py modules/viz.py modules/msa.py tests/test_msa_colors.py tests/test_app_flow.py
+git commit -m "feat: MSA colour schemes (ClustalX, Zappo, Taylor, hydrophobicity, identity, conservation, similarity) and a sequence viewer"
+```
+
