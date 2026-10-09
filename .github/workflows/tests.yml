@@ -11,8 +11,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install HMMER (needed by ANARCI)
-        run: sudo apt-get update && sudo apt-get install -y hmmer mafft
+      - name: Install HMMER, MAFFT and DSSP (same Debian/Ubuntu packages as packages.txt)
+        run: sudo apt-get update && sudo apt-get install -y hmmer mafft dssp
       - name: Install Python dependencies
         run: pip install -r requirements-dev.txt
       - name: Run tests
