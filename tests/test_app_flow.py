@@ -440,3 +440,34 @@ def test_ancestral_page_without_iqtree_and_bad_outgroup(monkeypatch):
     at.button(key="load_example").click().run()
     at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
     assert not at.exception and any("conda install -c bioconda iqtree" in e.value for e in at.error)
+
+
+def test_ancestral_result_stale_when_sequence_edited(monkeypatch):
+    from pathlib import Path
+    import modules.ancestral_page as page
+    from modules.ancestral import IQTreeResult, parse_report, parse_state, parse_tree
+    data = Path(__file__).parent / "data" / "asr"
+    alphabet, states = parse_state((data / "globins.state").read_text())
+    model, loglik = parse_report((data / "globins.iqtree").read_text())
+    text = (data / "globins_aln.fasta").read_text().split(">")[1:]
+    rows = [(chunk.splitlines()[0], "".join(chunk.splitlines()[1:])) for chunk in text]
+    result = IQTreeResult(parse_tree((data / "globins.treefile").read_text()), states, alphabet, model, loglik,
+                          "IQ-TREE multicore version 2.0.3", {"iqtree.state": b"x"})
+    monkeypatch.setattr(page, "find_iqtree", lambda: ("/usr/bin/iqtree2", "IQ-TREE 2.0.3"))
+    monkeypatch.setattr(page, "cached_run_iqtree", lambda r, s, m, b: result)
+    import modules.msa as msa_module
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": rows)
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
+    at.button(key="asr_run").click().run()
+    assert not at.exception and not any("Settings changed" in i.value for i in at.info)
+    fasta = at.text_area(key="fasta_text").value
+    lines = fasta.split("\n")
+    k = next(i for i, l in enumerate(lines) if l and not l.startswith(">"))
+    lines[k] = ("A" if lines[k][0] != "A" else "G") + lines[k][1:]
+    at.text_area(key="fasta_text").set_value("\n".join(lines)).run()
+    assert not at.exception
+    assert any("Settings changed: press Reconstruct ancestors to update." in i.value for i in at.info)

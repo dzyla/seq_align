@@ -1,5 +1,6 @@
 """Ancestral Reconstruction page: IQ-TREE marginal ancestral states, indels by parsimony, uncertainty and exports."""
 import copy
+import hashlib
 import html
 import io
 import zipfile
@@ -68,7 +69,8 @@ def ancestral_section(sequences, seq_type):
                            key="asr_aligner")
     model_label = c2.selectbox("Model", list(MODELS[seq_type]), key="asr_model")
     bootstrap = c3.toggle("Ultrafast bootstrap (1000)", key="asr_bootstrap")
-    params = {"n": len(sequences), "ids": tuple(r.id for r in sequences), "seq_type": seq_type, "aligner": aligner,
+    digest = hashlib.sha1("\n".join(f"{r.id}\t{r.seq}" for r in sequences).encode()).hexdigest()
+    params = {"n": len(sequences), "digest": digest, "ids": tuple(r.id for r in sequences), "seq_type": seq_type, "aligner": aligner,
               "model": MODELS[seq_type][model_label], "bootstrap": bootstrap}
     if st.button("Reconstruct ancestors", key="asr_run", type="primary", icon=":material/play_arrow:"):
         try:
@@ -110,6 +112,8 @@ def ancestral_section(sequences, seq_type):
             options = ancestor_options(tree, result.states)
             labels = {o[2]: o[0] for o in options}
             node = labels[st.selectbox("Node", list(labels), key="asr_node")]
+            st.caption("Node names come from IQ-TREE's unrooted tree; the sequences under each node follow the "
+                       "rooting chosen above.")
     except ASRError as e:
         st.warning(str(e))
         return

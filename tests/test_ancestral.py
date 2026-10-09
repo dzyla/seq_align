@@ -52,6 +52,8 @@ def test_mrca_and_single_leaf_rejected():
     assert mrca_node(tree, ["HBB_HUMAN", "HBB1_MOUSE"], r.states) == "Node4"
     with pytest.raises(ASRError, match="at least two"):
         mrca_node(tree, ["HBB_HUMAN"], r.states)
+    with pytest.raises(ASRError, match="root of the displayed tree"):
+        mrca_node(tree, [t.name for t in tree.get_terminals()], r.states)
     labels = [o[2] for o in ancestor_options(tree, r.states)]
     assert any(l.startswith("Node4: 2 sequences") for l in labels)
 
@@ -120,3 +122,10 @@ def test_ci_has_the_cloud_system_binaries():
     from modules.espript import find_mkdssp
     assert anc.find_iqtree() is not None, "iqtree package not found (iqtree2/iqtree3/iqtree)"
     assert find_mkdssp() is not None, "dssp package not found (mkdssp)"
+
+
+def test_check_site_count():
+    from modules.ancestral import check_site_count
+    check_site_count({"Node1": ("MKV", None)}, 3)
+    with pytest.raises(ASRError, match="2 sites for an alignment of 3 columns"):
+        check_site_count({"Node1": ("MK", None)}, 3)

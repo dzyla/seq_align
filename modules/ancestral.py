@@ -140,6 +140,7 @@ def run_iqtree(aligned_pairs, seq_type="Protein", model="LG+G4", bootstrap=0, ti
     for clade in tree.get_terminals():
         clade.name = placeholders.get(clade.name, clade.name)
     alphabet, states = parse_state(state_text)
+    check_site_count(states, len(aligned_pairs[0][1]))
     model_used, loglik = parse_report(report)
     return IQTreeResult(tree, states, alphabet, model_used or model, loglik, version, files)
 
@@ -196,20 +197,23 @@ def ancestor_options(tree, states):
 
 
 def mrca_node(tree, leaf_names, states):
-    """Name of the most recent common ancestor of the chosen leaves that has reconstructed states."""
+    """Name of the most recent common ancestor of the chosen leaves; a selection spanning the root raises."""
     if len(set(leaf_names)) < 2:
         raise ASRError("Choose at least two sequences: a single sequence is not an ancestor.")
     clade = tree.common_ancestor(list(leaf_names))
-    while clade is not None and clade.name not in states:   # e.g. an unnamed midpoint root
-        clade = tree.get_path(clade)[-2] if len(tree.get_path(clade)) > 1 else None
-        if clade is None:
-            break
-    if clade is None or clade.name not in states:
-        children = [c for c in tree.common_ancestor(list(leaf_names)).clades if c.name in states]
-        if not children:
-            raise ASRError("No reconstructed ancestor for these sequences.")
-        clade = children[0]
+    if clade.name not in states:
+        raise ASRError("The common ancestor of these sequences is the root of the displayed tree, which IQ-TREE "
+                       "does not reconstruct (it reconstructs the internal nodes of the unrooted tree). Choose an "
+                       "outgroup and select the remaining sequences, or pick a node from the list.")
     return clade.name
+
+
+def check_site_count(states, n_columns):
+    """Every node's state string must cover the alignment columns."""
+    for name, (seq, _) in states.items():
+        if len(seq) != n_columns:
+            raise ASRError(f"IQ-TREE returned {len(seq)} sites for an alignment of {n_columns} columns; "
+                           "cannot map ancestral states.")
 
 
 def ancestor_sequence(result, gaps, node):
