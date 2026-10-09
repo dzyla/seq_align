@@ -9,7 +9,7 @@ from modules.best_match import best_match_finder_section
 from modules.clustering import sequence_clustering_section
 from modules.conversion import format_conversion_section
 from modules.fetch import FETCH_SOURCES, FetchError, fetch_any, parse_id_list
-from modules.dna import dna_tools_section, dna_translation_section
+from modules.dna import dna_translation_section
 from modules.export import build_session_zip, has_results
 from modules.msa import msa_section
 from modules.navigation import available_analyses
@@ -176,6 +176,9 @@ def handle_input(input_format):
     return result, None
 
 
+BIO_BENCH_URL = "https://dzyla.github.io/toolbox/"
+
+
 GUIDE = """
 Align, compare and annotate **DNA** or **protein** sequences and structures.
 
@@ -189,7 +192,9 @@ the **Structure Viewer** (Mol*), and the **Show on structure** panels map mutati
 
 Pairwise alignments support Global, Local and Overlap (free end gaps) modes. MSA uses FAMSA.
 Mutation positions are always reported in reference-sequence coordinates.
-"""
+
+Quick calculators (restriction maps, codon usage, primers, cloning) live in [Bio-Bench](%s).
+""" % BIO_BENCH_URL
 
 
 def _sidebar_footer(sequences=None, seq_type=None):
@@ -201,6 +206,8 @@ def _sidebar_footer(sequences=None, seq_type=None):
                                    icon=":material/ios_share:", on_click="ignore", width="stretch",
                                    help="All current results, the input sequences and the parameters used.")
     appearance_popover()
+    st.sidebar.caption(f"Quick calculators (restriction maps, codon usage, primers, cloning): "
+                       f"[Bio-Bench]({BIO_BENCH_URL})")
 
 
 def main():
@@ -275,8 +282,6 @@ def main():
         sequence_properties_section(sequences)
     elif alignment_mode == "Translate DNA":
         dna_translation_section(sequences)
-    elif alignment_mode == "DNA Tools":
-        dna_tools_section(sequences)
     elif alignment_mode == "Convert Formats":
         format_conversion_section(sequences, input_format, seq_type)
     elif alignment_mode == "Structure Viewer":

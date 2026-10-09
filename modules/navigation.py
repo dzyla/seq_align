@@ -12,7 +12,7 @@ def available_analyses(has_sequences, has_structures, seq_type, n_sequences=None
         if n_sequences != 1:
             options += list(NEEDS_MULTIPLE)
         if seq_type == "DNA":
-            options += ["Translate DNA", "DNA Tools"]
+            options += ["Translate DNA"]
         else:
             options += ["Antibody Prediction", "Sequence Properties"]
         options.append("Convert Formats")

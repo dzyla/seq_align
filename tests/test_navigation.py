@@ -26,14 +26,15 @@ def test_structures_offer_viewer():
     assert "Structure Viewer" not in available_analyses(True, False, "Protein")
 
 
-def test_dna_tools_listed():
+def test_dna_tools_page_removed():
     options = available_analyses(True, False, "DNA")
-    assert options[-3:] == ["Translate DNA", "DNA Tools", "Convert Formats"]
+    assert options[-2:] == ["Translate DNA", "Convert Formats"]
+    assert "DNA Tools" not in options
 
 
 def test_single_sequence_omits_multi_sequence_analyses():
     options = available_analyses(True, False, "DNA", n_sequences=1)
-    assert options == ["Translate DNA", "DNA Tools", "Convert Formats"]
+    assert options == ["Translate DNA", "Convert Formats"]
     for name in ("Pairwise", "MSA", "Best Match Finder", "Sequence Clustering", "Phylogenetic Tree"):
         assert name not in options
 

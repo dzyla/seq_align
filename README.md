@@ -24,7 +24,6 @@ The sequence type (DNA/protein) is detected automatically and can be overridden.
 | Translate DNA | Six-frame ORF finder with nucleotide coordinates and selectable codon table |
 | Structure Viewer | Mol* viewer for loaded or fetched structures; color by pLDDT or B-factor; "Show on structure" panels for mutations and antibody CDRs; conservation exported as B-factors |
 | Sequence Properties | Molecular weight, pI, extinction coefficients, A280 and GRAVY for protein sequences |
-| DNA Tools | Reverse complement, codon usage and restriction map for DNA sequences |
 | Extracted Sequences | FASTA of the chains extracted from uploaded PDB/mmCIF structures |
 | Convert Formats | FASTA, Clustal, PHYLIP (relaxed), Stockholm, NEXUS, EMBL, GenBank |
 | PDB Residue Renumbering | Renumber chains to match target sequences, with insertion codes and per-chain review |
@@ -32,6 +31,9 @@ The sequence type (DNA/protein) is detected automatically and can be overridden.
 | Look and feel | "Lab notebook" day theme and "Notebook night" dark theme (switch in ⋮ → Settings, or follow your OS). The **Appearance** popover in the sidebar sets the figure palette, density, and whether interactive charts match the theme or use publication white. |
 | Phylogenetic trees | Rectangular, circular and unrooted layouts (plus cladogram), Classic ink / Support dots / Clade colour styles, midpoint or outgroup rooting, ladderize, named clades. Labels never overlap. Export SVG (editable text), PDF or 600-dpi PNG; an Explore view adds hover and zoom. |
 | Similarity matrix | Colour range from the data (off-diagonal min–max), fixed 0–1 or custom; colormap, reverse and per-cell values. |
+
+Quick bench calculators (restriction maps, codon usage, primers, cloning) live in the companion app
+[Bio-Bench](https://dzyla.github.io/toolbox/).
 
 Translate DNA is offered for DNA input and Antibody Prediction for protein input; the menu adapts to the detected sequence type.
 
