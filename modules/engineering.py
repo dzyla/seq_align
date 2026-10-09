@@ -28,7 +28,7 @@ def consensus_suggestions(rows, target_id, min_freq=0.6, min_occupancy=0.5, seq_
 
     A column qualifies when its non-gap share is >= min_occupancy, its most frequent residue c* has
     frequency >= min_freq among non-gap residues, and the target has a different residue there (not a gap).
-    Ranked by BLOSUM62 score of target->consensus (descending, then consensus frequency).
+    Ranked by consensus frequency x conservation (descending).
     Positions are in target numbering."""
     from modules.conservation import column_conservation  # local: keeps the import graph shallow
     from modules.pairwise import load_matrix

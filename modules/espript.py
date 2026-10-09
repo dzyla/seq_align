@@ -151,18 +151,21 @@ def secondary_structure(sf, chain_id):
     residues = table[chain_id]
     seq = "".join(r.aa for r in residues)
     exe = find_mkdssp()
+    dssp_error = ""
     if exe:
         try:
             ss = _dssp(sf, structure, chain_id, residues, exe)
             if ss.strip("-"):
                 return seq, ss, "DSSP", ""
-        except Exception:  # fall back to file records below
-            pass
+        except Exception as e:  # fall back to file records below
+            dssp_error = f"DSSP failed ({e.__class__.__name__}: {e})."
     ss = _ss_from_records(sf, chain_id, residues)
     if ss.strip("-"):
         return seq, ss, "file records", "" if exe else "mkdssp is not installed; using the file's HELIX/SHEET records."
-    reason = "DSSP is not available and the file has no secondary-structure records." if not exe else \
-        "DSSP found no secondary structure and the file has no records."
+    if not exe:
+        reason = "DSSP is not available and the file has no secondary-structure records."
+    else:
+        reason = dssp_error or "DSSP found no secondary structure and the file has no records."
     return seq, "-" * len(seq), "none", reason
 
 

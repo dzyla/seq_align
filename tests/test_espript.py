@@ -89,6 +89,16 @@ def test_no_secondary_structure_explains_why(monkeypatch):
     assert source == "none" and set(ss) == {"-"} and "not available" in reason
 
 
+@pytest.mark.skipif(shutil.which("mkdssp") is None and shutil.which("dssp") is None, reason="mkdssp not installed")
+def test_dssp_failure_reason_is_reported(monkeypatch):
+    import modules.espript as espript
+    monkeypatch.setattr(espript, "_dssp", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    text = "\n".join(l for l in (DATA / "1crn.pdb").read_text().splitlines() if not l.startswith(("HELIX", "SHEET")))
+    sf = StructureFile(name="x.pdb", data=text.encode(), fmt="PDB")
+    _, ss, source, reason = secondary_structure(sf, "A")
+    assert source == "none" and set(ss) == {"-"} and "boom" in reason
+
+
 def test_render_and_export():
     rows = [("seq_one", "MKVLAWGKV" * 8), ("seq_two", "MKVIAWGRV" * 8)]
     ss = "  HHHHH  " * 8

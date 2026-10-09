@@ -8,7 +8,7 @@ ROWS = [("t", "MKVAE-LW"), ("a", "MKILEALW"), ("b", "MKILEGLW"), ("c", "MRILE-LF
 
 def test_consensus_mismatch_suggested_in_target_numbering():
     table = consensus_suggestions(ROWS, "t")
-    assert list(table["Suggestion"])[:2] == ["V3I", "A4L"] or set(table["Suggestion"]) >= {"V3I", "A4L"}
+    assert {"V3I", "A4L"} <= set(table["Suggestion"])
     row = table.set_index("Suggestion").loc["V3I"]
     assert row["Consensus frequency"] == pytest.approx(0.8) and row["Sequences"] == 5
 
