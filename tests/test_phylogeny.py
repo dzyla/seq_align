@@ -271,3 +271,21 @@ def dark_tree_page(tmp_path, monkeypatch, charts):
 @pytest.mark.parametrize("charts,cream", [("Match theme", True), ("Publication white", False)])
 def test_explore_view_is_dark_only_when_charts_match_night_theme(tmp_path, monkeypatch, charts, cream):
     assert ("#ece8df" in dark_tree_page(tmp_path, monkeypatch, charts)) is cream
+
+
+def test_asr_tree_figure_keeps_node_names_supports_and_highlight():
+    from dataclasses import asdict
+    from modules.ancestral import parse_tree
+    from modules.phylogeny import tree_figure_outputs, tree_to_newick
+    from modules.tree_layout import join_node_labels
+    from modules.tree_render import TreeStyle
+    tree = parse_tree((Path(__file__).parent / "data" / "asr" / "globins.treefile").read_text())
+    style = TreeStyle(internal_labels=True, highlight="Node4")
+    items = tuple((k, tuple(v) if isinstance(v, list) else v) for k, v in asdict(style).items())
+    out = tree_figure_outputs(tree_to_newick(join_node_labels(tree)), "rectangular", False, "midpoint", (), True, 1,
+                              items)
+    names = {t.text for t in out["drawing"].texts if t.kind == "node"}
+    assert {"Node2", "Node3", "Node4"} <= names
+    assert {t.text for t in out["drawing"].texts if t.kind == "support"} >= {"82", "93"}
+    assert b">Node4<" in out["svg"] and "Node4/48" in out["newick"]
+    assert sum("Node4" in d[5] for d in out["drawing"].dots) == 1

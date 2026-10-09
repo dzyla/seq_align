@@ -400,6 +400,21 @@ def test_coevolution_result_invalidated_when_alignment_changes():
     assert not any(m.label == "Neff / L" for m in at.metric)
 
 
+def test_coevolution_clear_alignment_and_query_caption():
+    at = AppTest.from_file("app.py", default_timeout=180)
+    at.run()
+    at.button(key="coevo_standalone_btn").click().run()
+    at.session_state["coevo_alignment"] = ("synthetic.a3m", _coupled_a3m(n=20))
+    at.run()
+    assert any("Using synthetic.a3m: 20 sequences; query s0." in c.value for c in at.caption)
+    at.button(key="coevo_clear").click().run()
+    assert not at.exception and "coevo_alignment" not in at.session_state
+    assert any("Upload a deep alignment" in i.value for i in at.info)
+    at = load(FASTA_A)
+    at.radio(key="analysis_select").set_value("Coevolution").run()
+    assert not at.exception and any(c.value == "Query: a" for c in at.caption)
+
+
 def test_ancestral_page_with_fixture(monkeypatch):
     from pathlib import Path
     import modules.ancestral_page as page
@@ -429,6 +444,40 @@ def test_ancestral_page_with_fixture(monkeypatch):
     at.radio(key="asr_rooting").set_value("Outgroup").run()
     at.multiselect(key="asr_outgroup").set_value([r[0] for r in rows]).run()     # all leaves cannot root
     assert not at.exception and any("midpoint rooting instead" in w.value for w in at.warning)
+
+
+def test_ancestral_root_spanning_selection_keeps_tree(monkeypatch):
+    from pathlib import Path
+    import modules.ancestral_page as page
+    from modules.ancestral import IQTreeResult, parse_report, parse_state, parse_tree
+    data = Path(__file__).parent / "data" / "asr"
+    alphabet, states = parse_state((data / "globins.state").read_text())
+    model, loglik = parse_report((data / "globins.iqtree").read_text())
+    text = (data / "globins_aln.fasta").read_text().split(">")[1:]
+    rows = [(chunk.splitlines()[0], "".join(chunk.splitlines()[1:])) for chunk in text]
+    result = IQTreeResult(parse_tree((data / "globins.treefile").read_text()), states, alphabet, model, loglik,
+                          "IQ-TREE multicore version 2.0.3", {"iqtree.state": b"x"})
+    monkeypatch.setattr(page, "find_iqtree", lambda: ("/usr/bin/iqtree2", "IQ-TREE 2.0.3"))
+    monkeypatch.setattr(page, "cached_run_iqtree", lambda r, s, m, b: result)
+    import modules.msa as msa_module
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": rows)
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
+    at.button(key="asr_run").click().run()
+    assert not at.exception, at.exception
+    assert not any("root of the displayed tree" in w.value for w in at.warning)     # default: a real ancestor
+    assert len(at.multiselect(key="asr_leaves").value) == 2                         # a two-sequence clade
+    node = next(m.value for m in at.metric if m.label == "Ancestor")
+    assert node in states and any(f"{node} is marked" in c.value for c in at.caption)
+    at.multiselect(key="asr_leaves").set_value(["MYG_HUMAN", "HBA_HUMAN"]).run()
+    assert not at.exception, at.exception
+    assert any("root of the displayed tree" in w.value for w in at.warning)
+    assert any(e.label == "Tree" for e in at.expander)
+    assert any(d.key == "asr_tree_dl_svg" for d in at.get("download_button"))
+    assert not any(m.label == "Ancestor" for m in at.metric)
 
 
 def test_ancestral_page_without_iqtree_and_bad_outgroup(monkeypatch):

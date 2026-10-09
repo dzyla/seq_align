@@ -82,3 +82,18 @@ def test_text_colour_contrasts_with_background():
     assert _text_colour("#ffffff") == "#1a1a1a"
     assert _text_colour("#ccccff") == "#1a1a1a"
     assert _text_colour("#14b8a6") == "#1a1a1a" and _text_colour("#ff0000") == "#1a1a1a"   # light teal, red: dark letters
+
+
+def test_consensus_row_label_never_merges_with_a_sequence_id():
+    seqs = ["MKVLAAGIVG", "MKVLSAGIVG"]
+    from modules.viz import alignment_to_codes
+    coloring = color_alignment(seqs, "ClustalX")
+    fig = msa_viewer_figure(alignment_to_codes(seqs), ["consensus", "b"], coloring, start=0, width=10,
+                            ref_numbers=reference_numbering(seqs[0]), conservation=np.ones(10), consensus="x" * 10)
+    heat = next(t for t in fig.data if t.type == "heatmap")
+    assert list(heat.y) == ["consensus (consensus)", "consensus", "b"] and len(set(heat.y)) == 3
+
+
+def test_text_colour_crossover_for_near_black():
+    assert _text_colour("#808080") == "#1a1a1a"   # luminance 0.216: just above the 0.20 crossover
+    assert _text_colour("#7a7a7a") == "#ffffff"   # luminance 0.195: white gives more contrast

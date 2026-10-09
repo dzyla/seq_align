@@ -87,6 +87,30 @@ def prepare_tree(tree, rooting="midpoint", outgroup=(), ladderize=True):
             raise TreeError("Tree is too deep to draw.") from e
 
 
+def join_node_labels(tree):
+    """Copy of `tree` whose named internal clades are labelled 'name/support' (IQ-TREE's convention) with the
+    support cleared, so a Newick round trip keeps both; split_node_labels undoes it."""
+    with recursion_headroom(tree):
+        tree = copy.deepcopy(tree)
+        for clade in tree.get_nonterminals():
+            if clade.name and clade.confidence is not None:
+                clade.name, clade.confidence = f"{clade.name}/{clade.confidence:g}", None
+        return tree
+
+
+def split_node_labels(tree):
+    """In place: internal labels 'name/support' -> name and confidence (support). Returns the tree."""
+    for clade in tree.get_nonterminals():
+        if clade.name and "/" in clade.name:
+            name, _, support = clade.name.rpartition("/")
+            try:
+                clade.confidence = float(support)
+            except ValueError:
+                continue
+            clade.name = name
+    return tree
+
+
 def _height(clade, has_lengths):
     """Longest path from `clade` down to a tip (branch lengths, or edge counts when there are none)."""
     if clade.is_terminal():

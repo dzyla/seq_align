@@ -192,8 +192,9 @@ def _text_colour(hex_colour):
     lin = [(c / 12.92) if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
            for c in (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))]
     luminance = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
-    # 0.18 is where white and near-black give equal WCAG contrast
-    return "#ffffff" if luminance < 0.18 else "#1a1a1a"
+    # 0.20 is where white and #1a1a1a (luminance 0.0103) give equal WCAG contrast: 1.05 / (L + 0.05) =
+    # (L + 0.05) / 0.0603 at L = 0.2017
+    return "#ffffff" if luminance < 0.20 else "#1a1a1a"
 
 
 def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservation, consensus):
@@ -206,7 +207,11 @@ def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservat
     letters = codes_to_letters(codes[:, start:end])
     z = coloring.index[:, start:end]
     k = len(coloring.colors)
-    rows = ["consensus"] + list(ids)
+    label, n = "consensus", 1
+    while label in ids:  # a sequence called "consensus" would merge with this row on the category axis
+        label = "consensus (consensus)" if n == 1 else f"consensus (consensus {n})"
+        n += 1
+    rows = [label] + list(ids)
     z = np.vstack([np.zeros((1, len(cols)), dtype=z.dtype), z])
     text = np.vstack([np.array(list(consensus[start:end]))[None, :], letters])
     refpos = np.array([[("" if ref_numbers[c] is None else str(ref_numbers[c])) for c in cols]] * len(rows))
@@ -236,6 +241,16 @@ def msa_viewer_figure(codes, ids, coloring, start, width, ref_numbers, conservat
     return fig
 
 
+@st.cache_data(max_entries=8, show_spinner=False)
+def _cached_column_stats(seqs, seq_type, threshold=0.7):
+    """(conservation per column, consensus line) for the viewer, cached on the alignment content."""
+    from modules.conservation import column_conservation
+    from modules.espript import column_classes, consensus_line
+
+    seqs = list(seqs)
+    return column_conservation(seqs, seq_type), consensus_line(seqs, column_classes(seqs, threshold, seq_type))
+
+
 def _jump_to_residue(ref_numbers, n_cols):
     """Callback for the jump box: centre the window on the reference residue, once per change of the box."""
     jump = st.session_state.msa_view_jump
@@ -249,9 +264,6 @@ def _jump_to_residue(ref_numbers, n_cols):
 
 def alignment_view(pairs, seq_type, plot_method, reference_id):
     """MSA tab view: colour scheme + overview heatmap or sequence viewer."""
-    from modules.conservation import column_conservation
-    from modules.espript import column_classes, consensus_line
-
     ids = [i for i, _ in pairs]
     seqs = [s for _, s in pairs]
     c1, c2 = st.columns([1, 1])
@@ -281,8 +293,7 @@ def alignment_view(pairs, seq_type, plot_method, reference_id):
     if len(ids) > VIEWER_MAX_ROWS:
         first = st.slider("First sequence", 1, len(ids) - VIEWER_MAX_ROWS + 1, 1, key="msa_view_row")
         rows = rows[first - 1:first - 1 + VIEWER_MAX_ROWS]
-    conservation = column_conservation(seqs, seq_type)
-    consensus = consensus_line(seqs, column_classes(seqs, 0.7, seq_type))
+    conservation, consensus = _cached_column_stats(tuple(seqs), seq_type, 0.7)
     # column statistics come from the whole alignment; a row window only slices the colouring
     sub = Coloring(coloring.index[rows], coloring.colors, coloring.legend)
     show_plotly(msa_viewer_figure(codes[rows], [ids[r] for r in rows], sub, start - 1, width, ref_numbers,

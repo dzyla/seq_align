@@ -15,7 +15,7 @@ from modules.ui import page_header, show_plotly
 CLOSE, FAR, UNKNOWN = "#1b9e4b", "#d6312b", "#9e9e9e"
 
 
-@st.cache_data(max_entries=4, show_spinner=False)
+@st.cache_data(max_entries=2, show_spinner=False)
 def cached_parse(data):
     return parse_alignment(data.decode("utf-8", "replace"))
 
@@ -68,8 +68,20 @@ def contact_map_figure(result, n_show, distances=None, min_sep=6):
     return fig
 
 
+def _rows_digest(rows):
+    return hashlib.sha1("\n".join(f"{i}\t{s}" for i, s in rows).encode()).hexdigest()
+
+
+def _clear_alignment():
+    """Forget the stored upload and its result; a new uploader key empties the file box too."""
+    for name in ("coevo_alignment", "coevo_result"):
+        st.session_state.pop(name, None)
+    st.session_state.coevo_upload_n = st.session_state.get("coevo_upload_n", 0) + 1
+
+
 def _alignment_rows(sequences, seq_type, standalone):
-    """(rows, label) from the chosen source, or (None, None) after telling the user what is missing."""
+    """(rows, label, digest) from the chosen source, or (None, None, None) after telling the user what is
+    missing. An upload is hashed once, when it is stored."""
     from modules.msa import MSA_METHODS, MSAError, cached_run_msa, mafft_available
 
     sources = ["Upload an alignment"] if standalone or not sequences else ["Current dataset", "Upload an alignment"]
@@ -77,10 +89,10 @@ def _alignment_rows(sequences, seq_type, standalone):
     if source == "Current dataset":
         if seq_type != "Protein":
             st.info("Coevolution needs protein sequences; switch the sequence type or upload a protein alignment.")
-            return None, None
+            return None, None, None
         if len(sequences) < 2:
             st.info("Load at least two sequences, or upload a deep alignment (e.g. a ColabFold .a3m).")
-            return None, None
+            return None, None, None
         method = st.selectbox("Aligner", [m for m in MSA_METHODS if m == "FAMSA" or mafft_available()],
                               key="coevo_aligner")
         try:
@@ -88,27 +100,35 @@ def _alignment_rows(sequences, seq_type, standalone):
                 rows = cached_run_msa(tuple((r.id, str(r.seq)) for r in sequences), "Protein", method)
         except MSAError as e:
             st.error(str(e))
-            return None, None
-        return rows, f"current dataset ({method})"
-    upload = st.file_uploader("Alignment: ColabFold/HHblits .a3m, Stockholm .sto, or aligned FASTA",
-                              type=["a3m", "sto", "stockholm", "fasta", "fa", "aln", "txt"], key="coevo_file")
-    if upload is not None:
-        st.session_state.coevo_alignment = (upload.name, upload.getvalue())
+            return None, None, None
+        st.caption(f"Query: {rows[0][0]}")
+        return rows, f"current dataset ({method})", _rows_digest(rows)
+    upload = st.file_uploader("Alignment: ColabFold/HHblits .a3m, Stockholm .sto, Clustal .aln, or aligned FASTA",
+                              type=["a3m", "sto", "stockholm", "fasta", "fa", "aln", "txt"],
+                              key=f"coevo_file_{st.session_state.get('coevo_upload_n', 0)}")
     stored = st.session_state.get("coevo_alignment")
+    if upload is not None and (not stored or stored[3:4] != (upload.file_id,)):
+        data = upload.getvalue()
+        stored = st.session_state.coevo_alignment = (upload.name, data, hashlib.sha1(data).hexdigest(),
+                                                     upload.file_id)
     if not stored:
         st.info("Upload a deep alignment. The first sequence is the query (as in ColabFold A3M files).")
-        return None, None
+        return None, None, None
+    digest = stored[2] if len(stored) > 2 else hashlib.sha1(stored[1]).hexdigest()
     rows = cached_parse(stored[1])
+    c1, c2 = st.columns([4, 1], vertical_alignment="center")
+    c1.caption(f"Using {stored[0]}: {len(rows):,} sequences" + (f"; query {rows[0][0]}." if rows else "."))
+    c2.button("Clear alignment", key="coevo_clear", on_click=_clear_alignment, icon=":material/close:")
     if len(rows) < 2:
         st.error("The file contains fewer than two sequences.")
-        return None, None
-    return rows, stored[0]
+        return None, None, None
+    return rows, stored[0], digest
 
 
 def coevolution_section(sequences, seq_type, standalone=False):
     page_header("Coevolution contacts",
                 "Residue pairs that co-vary across a deep alignment, predicted with plmDCA or mean-field DCA.")
-    rows, label = _alignment_rows(sequences, seq_type, standalone)
+    rows, label, digest = _alignment_rows(sequences, seq_type, standalone)
     if rows is None:
         return
     c1, c2 = st.columns([2, 1])
@@ -131,7 +151,6 @@ def coevolution_section(sequences, seq_type, standalone=False):
         start, end = 1, L
     st.caption(f"Limits on Streamlit Cloud for this method: {max_cols} columns, {max_seqs:,} sequences "
                "(larger alignments are subsampled with a fixed seed, the query always kept).")
-    digest = hashlib.sha1("\n".join(f"{i}\t{s}" for i, s in rows).encode()).hexdigest()
     params = {"label": label, "n": len(rows), "digest": digest, "method": method, "start": start, "end": end, "iters": iters}
     if st.button("Compute contacts", key="coevo_run", type="primary", icon=":material/play_arrow:"):
         try:
@@ -179,7 +198,9 @@ def _show_result(result):
             name = c1.selectbox("Structure", list(structures), key="coevo_structure")
             sf = structures[name]
             table = cached_residue_table(sf.data, sf.fmt, sf.name)
-            if table:
+            if not table:
+                st.info("No protein chains in this structure.")
+            else:
                 ranked = rank_chains(result["query"], table)
                 chain_id = c2.selectbox("Chain", [c for c, _ in ranked], key="coevo_chain",
                                         format_func=lambda c: f"{c} ({dict(ranked)[c]:.1%} identity)")

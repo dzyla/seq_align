@@ -129,3 +129,58 @@ def test_check_site_count():
     check_site_count({"Node1": ("MKV", None)}, 3)
     with pytest.raises(ASRError, match="2 sites for an alignment of 3 columns"):
         check_site_count({"Node1": ("MK", None)}, 3)
+
+
+def test_iqtree_major_version():
+    from modules.ancestral import iqtree_major
+    assert iqtree_major("IQ-TREE multicore version 2.0.3 for Linux 64-bit built Dec 20 2020") == 2
+    assert iqtree_major("IQ-TREE version 3.0.1 for Linux x86 64-bit built May 5 2025") == 3
+    assert iqtree_major("IQ-TREE multicore version 1.6.12 for Linux 64-bit built Aug 15 2019") == 1
+    assert iqtree_major("IQ-TREE something") is None
+
+
+def test_iqtree_1x_treated_as_missing(monkeypatch):
+    monkeypatch.setattr(anc.shutil, "which", lambda name: "/opt/iqtree" if name == "iqtree" else None)
+
+    class Done:
+        stdout = "IQ-TREE multicore version 1.6.12 for Linux 64-bit built Aug 15 2019\n"
+    monkeypatch.setattr(anc.subprocess, "run", lambda *a, **k: Done())
+    assert anc.find_iqtree() is None
+    with pytest.raises(ASRError, match="IQ-TREE 2 or newer is required"):
+        anc.run_iqtree(ROWS, "Protein")
+
+
+def test_failure_message_lists_last_errors(monkeypatch, tmp_path):
+    monkeypatch.setattr(anc, "find_iqtree", lambda: ("/bin/iqtree", "IQ-TREE 2"))
+    log = ("IQ-TREE starting\nWARNING: 3 sequences contain more than 50% gaps\nERROR: Sequence s0001 has an "
+           "invalid character\nERROR: Alignment has errors\nsome trailing line\n")
+
+    class Done:
+        returncode, stdout, stderr = 2, "", ""
+
+    def fake_run(cmd, cwd, **k):
+        (Path(cwd) / "run.log").write_text(log)
+        return Done()
+    monkeypatch.setattr(anc.subprocess, "run", fake_run)
+    with pytest.raises(ASRError) as e:
+        anc.run_iqtree(ROWS, "Protein")
+    message = str(e.value)
+    assert "invalid character" in message and "Alignment has errors" in message and "50% gaps" in message
+
+
+def test_compare_rna_extant_counts_u_as_t():
+    from io import StringIO
+    from Bio import Phylo
+    tree = Phylo.read(StringIO("((a,b)N1,(c,d)N2)N0;"), "newick")
+    result = IQTreeResult(tree, {"N1": ("ACGTA", np.ones((5, 4), np.float32))}, "ACGT", "GTR+G4", None, "IQ-TREE 2")
+    rows = [("a", "ACGUA"), ("b", "ACGUA"), ("c", "ACGUC"), ("d", "ACGUC")]
+    subs, ins, dels, identity = compare_to_extant(result, {}, "N1", rows, "a")
+    assert subs == [] and identity == 1.0
+    subs, *_ = compare_to_extant(result, {}, "N1", rows, "c")
+    assert [label for label, _ in subs] == ["A5C"]
+
+
+def test_fasta_header_names_the_node_once():
+    from modules.ancestral_page import fasta_record
+    assert fasta_record("Node4", "ML ancestor", "LG+G4", "-1478.58", "MKV") == \
+        ">Node4 ML ancestor; model=LG+G4; lnL=-1478.58\nMKV\n"

@@ -1,5 +1,4 @@
 """Ancestral Reconstruction page: IQ-TREE marginal ancestral states, indels by parsimony, uncertainty and exports."""
-import copy
 import hashlib
 import html
 import io
@@ -10,12 +9,23 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from modules.ancestral import (INSTALL_HINT, MAX_SEQUENCES, MIN_SEQUENCES, MODELS, ASRError, altall_sequence,
-                               ancestor_options, ancestor_sequence, compare_to_extant, find_iqtree, mrca_node,
+                               ancestor_options, ancestor_sequence, compare_to_extant, iqtree_status, mrca_node,
                                reconstruct_gaps, run_iqtree, uncertain_sites)
 from modules.ui import page_header, show_plotly
 
 CERTAIN, UNSURE, LOW = "#ffffff", "#fdd8a8", "#f59e42"
 DIFFERS = "#2a5db0"
+
+
+@st.cache_resource(show_spinner=False)
+def _iqtree_status():
+    """IQ-TREE detection runs `--version`, so it is done once per server process."""
+    return iqtree_status()
+
+
+def find_iqtree():
+    """(path, version line) of a usable IQ-TREE 2+, or None (cached)."""
+    return _iqtree_status()[0]
 
 
 @st.cache_data(max_entries=4, show_spinner=False)
@@ -49,6 +59,10 @@ def posterior_figure(posteriors, threshold):
     return fig
 
 
+def fasta_record(node, kind, model, lnl, seq):
+    return f">{node} {kind}; model={model}; lnL={lnl}\n{seq}\n"
+
+
 def ancestral_section(sequences, seq_type):
     from modules.msa import MSA_METHODS, MSAError, cached_run_msa, mafft_available
     from modules.phylogeny import TreeError
@@ -58,7 +72,7 @@ def ancestral_section(sequences, seq_type):
                 "Maximum-likelihood ancestors with a posterior for every residue (IQ-TREE), indels by parsimony.")
     found = find_iqtree()
     if found is None:
-        st.error(INSTALL_HINT)
+        st.error(_iqtree_status()[1] or INSTALL_HINT)
         return
     if not MIN_SEQUENCES <= len(sequences) <= MAX_SEQUENCES:
         st.info(f"Ancestral reconstruction needs {MIN_SEQUENCES}-{MAX_SEQUENCES} sequences "
@@ -101,24 +115,47 @@ def ancestral_section(sequences, seq_type):
         st.warning(f"{e} Using midpoint rooting instead.")
         tree = prepare_tree(result.tree, "midpoint")
     gaps = reconstruct_gaps(tree, rows)
+    node = _pick_ancestor(tree, result, leaves)
+    if node is not None:
+        _ancestor_sections(result, rows, gaps, node, leaves, lnl)
 
+    from modules.phylogeny import phylogenetic_tree_section
+
+    with st.expander("Tree"):
+        st.caption("Internal nodes carry IQ-TREE's names (as in the node list and the downloads)"
+                   + (f"; {node} is marked." if node else "."))
+        phylogenetic_tree_section(tree, key_prefix="asr_tree", internal_labels=True, highlight=node)
+
+
+def _pick_ancestor(tree, result, leaves):
+    """The chosen ancestor's node name, or None after a warning (e.g. a selection whose common ancestor is the
+    root). The default selection is the two sequences of the smallest reconstructed clade."""
+    options = ancestor_options(tree, result.states)
+    if not options:
+        st.warning("This tree has no reconstructed internal node to show.")
+        return None
+    smallest = next(c for c in tree.get_nonterminals() if c.name == options[0][0])
+    default = [t.name for t in smallest.get_terminals()][:2]
     pick = st.radio("Choose an ancestor", ["Ancestor of chosen sequences", "From the list of nodes"],
                     horizontal=True, key="asr_pick")
     try:
         if pick == "Ancestor of chosen sequences":
-            chosen = st.multiselect("Sequences", leaves, default=leaves[:2], key="asr_leaves")
-            node = mrca_node(tree, chosen, result.states)
-        else:
-            options = ancestor_options(tree, result.states)
-            labels = {o[2]: o[0] for o in options}
-            node = labels[st.selectbox("Node", list(labels), key="asr_node")]
-            st.caption("Node names come from IQ-TREE's unrooted tree; the sequences under each node follow the "
-                       "rooting chosen above.")
+            chosen = st.multiselect("Sequences", leaves, default=default, key="asr_leaves")
+            return mrca_node(tree, chosen, result.states)
+        labels = {o[2]: o[0] for o in options}
+        node = labels[st.selectbox("Node", list(labels), key="asr_node")]
+        st.caption("Node names come from IQ-TREE's unrooted tree; the sequences under each node follow the "
+                   "rooting chosen above.")
+        return node
     except ASRError as e:
         st.warning(str(e))
-        return
+        return None
+
+
+def _ancestor_sections(result, rows, gaps, node, leaves, lnl):
+    """Sequence, posteriors, uncertain sites, downloads, comparison with an extant sequence and 3D view."""
     c1, c2 = st.columns(2)
-    threshold = c1.slider("Uncertain below posterior", 0.5, 0.95, 0.8, 0.05, key="asr_threshold")
+    threshold = c1.slider("Uncertain below posterior", 0.5, 0.9, 0.8, 0.05, key="asr_threshold")
     min_alt = c2.slider("Show alternatives with posterior at least", 0.05, 0.5, 0.2, 0.05, key="asr_min_alt")
     seq, pp, anc_cols = ancestor_sequence(result, gaps, node)
     cols = st.columns(4)
@@ -136,12 +173,11 @@ def ancestral_section(sequences, seq_type):
     else:
         st.dataframe(unsure, hide_index=True, width="stretch")
     alt = altall_sequence(result, gaps, node, threshold, min_alt)
-    header = f"{node} model={result.model} lnL={lnl}"
     d1, d2, d3, d4 = st.columns(4)
-    d1.download_button("ML ancestor (FASTA)", f">{node} ML ancestor; {header}\n{seq}\n", f"{node}_ML.fasta",
-                       "text/plain", on_click="ignore", icon=":material/download:")
-    d2.download_button("AltAll (FASTA)", f">{node} AltAll; {header}\n{alt}\n", f"{node}_AltAll.fasta", "text/plain",
-                       on_click="ignore", icon=":material/download:",
+    d1.download_button("ML ancestor (FASTA)", fasta_record(node, "ML ancestor", result.model, lnl, seq),
+                       f"{node}_ML.fasta", "text/plain", on_click="ignore", icon=":material/download:")
+    d2.download_button("AltAll (FASTA)", fasta_record(node, "AltAll", result.model, lnl, alt),
+                       f"{node}_AltAll.fasta", "text/plain", on_click="ignore", icon=":material/download:",
                        help="Every uncertain site switched to its best alternative: the usual robustness check.")
     d3.download_button("Uncertain sites (CSV)", unsure.to_csv(index=False), f"{node}_uncertain_sites.csv",
                        "text/csv", on_click="ignore", icon=":material/download:")
@@ -170,11 +206,3 @@ def ancestral_section(sequences, seq_type):
                               title="Show confidence and differences on structure (Mol*)")
     st.caption(f"Structure colours: orange = posterior below {threshold:.2f}, light orange = below 0.9, "
                f"blue = differs from {extant}.")
-
-    from modules.phylogeny import phylogenetic_tree_section
-
-    display = copy.deepcopy(tree)
-    for clade in display.get_nonterminals():
-        clade.name = None          # IQ-TREE node names would otherwise merge with supports in the Newick export
-    with st.expander("Tree"):
-        phylogenetic_tree_section(display, key_prefix="asr_tree")

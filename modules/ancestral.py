@@ -16,8 +16,9 @@ IQTREE_TIMEOUT = 900
 MIN_SEQUENCES, MAX_SEQUENCES = 4, 300
 MODELS = {"Protein": {"LG+G4 (fast)": "LG+G4", "Best fit (ModelFinder, slower)": "MFP"},
           "DNA": {"GTR+G4 (fast)": "GTR+G4", "Best fit (ModelFinder, slower)": "MFP"}}
-INSTALL_HINT = ("IQ-TREE is not installed. On Streamlit Cloud add `iqtree` to packages.txt; locally run "
-                "`conda install -c bioconda iqtree`.")
+_INSTALL = "On Streamlit Cloud add `iqtree` to packages.txt; locally run `conda install -c bioconda iqtree`."
+INSTALL_HINT = f"IQ-TREE is not installed. {_INSTALL}"
+OLD_VERSION_HINT = "IQ-TREE 2 or newer is required (found: {line}). " + _INSTALL
 GAP_CHARS = "-."
 UNCERTAIN_COLUMNS = ["Ancestor position", "Alignment column", "ML residue", "Posterior", "Alternatives"]
 
@@ -37,8 +38,16 @@ class IQTreeResult:
     files: dict = field(default_factory=dict)  # file name -> bytes (treefile, state, iqtree report)
 
 
-def find_iqtree():
-    """First IQ-TREE binary on PATH whose --version output mentions IQ-TREE, as (path, version line)."""
+def iqtree_major(version_line):
+    """Major version from an IQ-TREE --version line ('IQ-TREE multicore version 2.0.3 ...' -> 2), else None."""
+    m = re.search(r"version\s+(\d+)\.", version_line or "")
+    return int(m.group(1)) if m else None
+
+
+def iqtree_status():
+    """((path, version line), None) for the first IQ-TREE 2+ binary on PATH whose --version output mentions
+    IQ-TREE, else (None, message): not installed, or only IQ-TREE 1.x found (its -asr output differs)."""
+    old = None
     for name in IQTREE_NAMES:
         path = shutil.which(name)
         path = os.path.abspath(path) if path else None
@@ -48,10 +57,32 @@ def find_iqtree():
             out = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=30).stdout
         except (OSError, subprocess.SubprocessError):
             continue
-        line = next((l for l in out.splitlines() if "IQ-TREE" in l), None)
-        if line:
-            return path, line.strip()
-    return None
+        line = next((l.strip() for l in out.splitlines() if "IQ-TREE" in l), None)
+        if not line:
+            continue
+        major = iqtree_major(line)
+        if major is not None and major < 2:
+            old = old or line
+            continue
+        return (path, line), None
+    return None, (OLD_VERSION_HINT.format(line=old) if old else INSTALL_HINT)
+
+
+def find_iqtree():
+    """First IQ-TREE 2+ binary on PATH, as (path, version line), or None."""
+    return iqtree_status()[0]
+
+
+def missing_hint():
+    """Why no usable IQ-TREE was found (install hint, or the version requirement)."""
+    return iqtree_status()[1] or INSTALL_HINT
+
+
+def _failure_lines(log, n=3):
+    """The last n ERROR/WARNING lines of an IQ-TREE log, or its last non-empty line."""
+    lines = [l.strip() for l in log.splitlines() if l.strip()]
+    flagged = [l for l in lines if l.startswith(("ERROR", "WARNING"))]
+    return "; ".join(flagged[-n:]) if flagged else (lines[-1] if lines else "unknown error")
 
 
 def parse_state(text):
@@ -103,7 +134,7 @@ def run_iqtree(aligned_pairs, seq_type="Protein", model="LG+G4", bootstrap=0, ti
     """Run IQ-TREE with ancestral state reconstruction (-asr) on aligned (id, sequence) pairs."""
     found = find_iqtree()
     if found is None:
-        raise ASRError(INSTALL_HINT)
+        raise ASRError(missing_hint())
     exe, version = found
     if not MIN_SEQUENCES <= len(aligned_pairs) <= MAX_SEQUENCES:
         raise ASRError(f"Ancestral reconstruction needs {MIN_SEQUENCES}-{MAX_SEQUENCES} sequences "
@@ -131,8 +162,7 @@ def run_iqtree(aligned_pairs, seq_type="Protein", model="LG+G4", bootstrap=0, ti
                 return handle.read()
         if done.returncode != 0 or read("run.state") is None:
             log = read("run.log") or done.stderr or done.stdout or ""
-            last = next((l for l in reversed(log.splitlines()) if l.strip()), "unknown error")
-            raise ASRError(f"IQ-TREE failed: {last}")
+            raise ASRError(f"IQ-TREE failed: {_failure_lines(log)}")
         tree_text, state_text, report = read("run.treefile"), read("run.state"), read("run.iqtree") or ""
         files = {f"iqtree.{ext}": read(f"run.{ext}", "rb") for ext in ("treefile", "state", "iqtree", "log")
                  if read(f"run.{ext}", "rb") is not None}
@@ -263,6 +293,9 @@ def compare_to_extant(result, gaps, node, aligned_pairs, extant_id):
     states = result.states[node][0]
     present = gaps.get(node, np.ones(len(states), bool))
     extant = dict(aligned_pairs)[extant_id]
+    letters = set(extant.upper())
+    if "U" in letters and "T" not in letters:          # RNA input: IQ-TREE writes DNA states (T for U)
+        states = states.replace("T", "U")
     subs, ins, dels, same, both, pos = [], 0, 0, 0, 0, 0
     for c, (a, e) in enumerate(zip(states, extant)):
         e_res = e not in GAP_CHARS

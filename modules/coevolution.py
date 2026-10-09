@@ -32,10 +32,22 @@ class PreparedMSA:
     n_subsampled: int        # sequences removed by subsampling
 
 
+CLUSTAL_HEADERS = ("CLUSTAL", "PROBCONS", "MUSCLE", "MSAPROBS", "Kalign", "Biopython")   # Bio.AlignIO's
+ANNOTATION_ROW = re.compile(r"^(ss_|sa_)|^consensus$", re.IGNORECASE)   # HH-suite rows, dropped as reformat.pl does
+
+
 def parse_alignment(text):
-    """A3M (lowercase insertions and '.' removed), Stockholm, or aligned FASTA -> [(id, aligned sequence)].
-    Sequences whose length differs from the first are kept here and dropped (and counted) by prepare_msa."""
-    if text.lstrip().startswith("# STOCKHOLM"):
+    """A3M (lowercase insertions and '.' removed), Stockholm, Clustal, or aligned FASTA -> [(id, aligned sequence)].
+    HH-suite annotation rows (ss_pred, ss_conf, sa_..., Consensus) are dropped. Sequences whose length differs
+    from the first are kept here and dropped (and counted) by prepare_msa."""
+    stripped = text.lstrip()
+    if stripped.startswith(CLUSTAL_HEADERS):
+        from io import StringIO
+
+        from Bio import AlignIO
+
+        rows = [(r.id, str(r.seq)) for r in AlignIO.read(StringIO(stripped), "clustal")]
+    elif stripped.startswith("# STOCKHOLM"):
         seqs = {}
         for line in text.splitlines():
             if not line.strip() or line.startswith(("#", "//")):
@@ -56,6 +68,7 @@ def parse_alignment(text):
                 buf.append(line.strip())
         if name is not None:
             rows.append((name, "".join(buf)))
+    rows = [(i, s) for i, s in rows if not ANNOTATION_ROW.search(i)]
     if len({len(s) for _, s in rows}) > 1:                      # A3M: lowercase and '.' are insertions
         return [(i, re.sub(r"[a-z.]", "", s)) for i, s in rows]
     return [(i, s.upper().replace(".", "-")) for i, s in rows]   # aligned FASTA / Stockholm
@@ -165,8 +178,9 @@ def plm_dca(msa, w, iters=PLM_ITERATIONS, history=3, lam_h=0.01, lam_j_factor=0.
     keep = block[rows_] != block[cols_]
     rows_, cols_ = rows_[keep].astype(np.int32), cols_[keep].astype(np.int32)
     del keep
-    up = rows_.astype(np.int64) * Lq + cols_
-    lo = cols_.astype(np.int64) * Lq + rows_
+    flat = np.int32 if Lq * Lq < 2 ** 31 else np.int64     # int32 at the PLM caps halves the index memory
+    up = rows_.astype(flat) * flat(Lq) + cols_
+    lo = cols_.astype(flat) * flat(Lq) + rows_
     del rows_, cols_
     nh = Lq
     W = np.zeros((Lq, Lq), dtype=np.float32)

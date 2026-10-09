@@ -108,3 +108,18 @@ def test_plm_dca_robust_with_many_iterations():
     scores = plm_dca(msa, sequence_weights(msa), iters=100)
     assert np.isfinite(scores).all()
     assert top_pairs(scores, min_sep=1, k=1)[0][:2] == (2, 9)
+
+
+def test_hhsuite_annotation_rows_dropped():
+    text = ">ss_pred\nCCHHHHCC\n>ss_conf\n98877789\n>query\nMKVLAAGI\n>hit\nMKVL-AGI\n"
+    rows = parse_alignment(text)
+    assert rows == [("query", "MKVLAAGI"), ("hit", "MKVL-AGI")]
+    assert prepare_msa(rows).query_seq == "MKVLAAGI"
+    assert parse_alignment(">Consensus\nMKV\n>sa_x\nABC\n>q\nMKV\n>h\nMRV\n") == [("q", "MKV"), ("h", "MRV")]
+
+
+def test_clustal_alignment_parsed():
+    text = ("CLUSTAL W (1.83) multiple sequence alignment\n\n"
+            "seqA            MKV-LA\nseqB            MRVQLA\n                * * **\n\n"
+            "seqA            GI\nseqB            GV\n                * \n")
+    assert parse_alignment(text) == [("seqA", "MKV-LAGI"), ("seqB", "MRVQLAGV")]
