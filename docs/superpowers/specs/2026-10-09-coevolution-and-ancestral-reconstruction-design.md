@@ -53,7 +53,7 @@
 ### Alignment source (radio)
 - **Current dataset:** the MSA from the existing cached alignment (`cached_run_msa(pairs, seq_type, method)`). The method can be FAMSA or MAFFT, as on the MSA page. Proteins only; a DNA dataset shows an info message.
 - **Upload an alignment:** `.a3m`, `.sto`/`.stockholm`, or `.fasta`/`.fa`/`.aln`.
-  - The file stays on this page, in `st.session_state.coevo_upload` as raw bytes plus a name. It never becomes the main dataset.
+  - The file stays on this page, in `st.session_state.coevo_alignment` as raw bytes plus a name. It never becomes the main dataset.
   - Upload size follows Streamlit's default 200 MB limit.
 
 ### Preparation (`modules/coevolution.py`, pure)
