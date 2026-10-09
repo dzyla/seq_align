@@ -384,3 +384,17 @@ def test_coevolution_long_query_needs_region_and_shallow_alignment_warns():
     at.button(key="coevo_run").click().run()
     assert not at.exception
     assert any("too few diverse sequences" in e.value for e in at.error)   # 40 random sequences: Neff/L < 1
+
+
+def test_coevolution_result_invalidated_when_alignment_changes():
+    at = AppTest.from_file("app.py", default_timeout=180)
+    at.run()
+    at.button(key="coevo_standalone_btn").click().run()
+    at.session_state["coevo_alignment"] = ("synthetic.a3m", _coupled_a3m(seed=0))
+    at.run()
+    at.button(key="coevo_run").click().run()
+    assert any(m.label == "Neff / L" for m in at.metric)
+    at.session_state["coevo_alignment"] = ("synthetic.a3m", _coupled_a3m(seed=1))
+    at.run()
+    assert any("Settings changed" in i.value for i in at.info)
+    assert not any(m.label == "Neff / L" for m in at.metric)

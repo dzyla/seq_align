@@ -56,7 +56,9 @@ def parse_alignment(text):
                 buf.append(line.strip())
         if name is not None:
             rows.append((name, "".join(buf)))
-    return [(i, re.sub(r"[a-z.]", "", s)) for i, s in rows]
+    if len({len(s) for _, s in rows}) > 1:                      # A3M: lowercase and '.' are insertions
+        return [(i, re.sub(r"[a-z.]", "", s)) for i, s in rows]
+    return [(i, s.upper().replace(".", "-")) for i, s in rows]   # aligned FASTA / Stockholm
 
 
 def prepare_msa(rows, query=0, max_seq_gap=0.5, max_seqs=MF_MAX_SEQUENCES, seed=0):
@@ -220,6 +222,9 @@ def plm_dca(msa, w, iters=PLM_ITERATIONS, history=3, lam_h=0.01, lam_j_factor=0.
             if f2 <= f + 1e-4 * step * slope:
                 break
             step *= 0.5
+        else:                                     # no acceptable step: keep theta, restart from the gradient
+            S, Y = [], []
+            continue
         s, y = trial - theta, g2 - g
         if float(s @ y) > 1e-10:
             S.append(s)

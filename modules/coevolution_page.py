@@ -1,4 +1,5 @@
 """Coevolution page: contacts from a deep MSA (current dataset or an uploaded A3M / Stockholm / FASTA)."""
+import hashlib
 import time
 
 import numpy as np
@@ -52,12 +53,13 @@ def contact_map_figure(result, n_show, distances=None, min_sep=6):
     if pairs:
         i, j, s = (np.array(v) for v in zip(*pairs))
         long_range = (j - i) >= 24
+        smin, smax = float(s.min()), float(s.max())
         for mask, name, symbol in ((long_range, "Predicted (|i-j| >= 24)", "circle"),
                                    (~long_range, "Predicted (6 <= |i-j| < 24)", "diamond")):
             if mask.any():
                 fig.add_trace(go.Scatter(
                     x=j[mask] + 1 + off, y=i[mask] + 1 + off, mode="markers", name=name,
-                    marker=dict(size=7, symbol=symbol, color=s[mask], colorscale="Viridis", showscale=False),
+                    marker=dict(size=7, symbol=symbol, color=s[mask], colorscale="Viridis", showscale=False, cmin=smin, cmax=smax),
                     text=[f"{q[a]}{a + 1 + off} - {q[b]}{b + 1 + off}: {v:.3f}" for a, b, v in
                           zip(i[mask], j[mask], s[mask])], hovertemplate="%{text}<extra></extra>"))
     fig.update_layout(height=640, xaxis=dict(title="Query position", range=[off, off + L + 1]),
@@ -129,10 +131,11 @@ def coevolution_section(sequences, seq_type, standalone=False):
         start, end = 1, L
     st.caption(f"Limits on Streamlit Cloud for this method: {max_cols} columns, {max_seqs:,} sequences "
                "(larger alignments are subsampled with a fixed seed, the query always kept).")
-    params = {"label": label, "n": len(rows), "method": method, "start": start, "end": end, "iters": iters}
+    digest = hashlib.sha1("\n".join(f"{i}\t{s}" for i, s in rows).encode()).hexdigest()
+    params = {"label": label, "n": len(rows), "digest": digest, "method": method, "start": start, "end": end, "iters": iters}
     if st.button("Compute contacts", key="coevo_run", type="primary", icon=":material/play_arrow:"):
         try:
-            with st.spinner("Computing coevolution (this can take a minute for deep alignments)..."):
+            with st.spinner("Computing coevolution (seconds for small alignments, a few minutes at the size limits)..."):
                 st.session_state.coevo_result = {"params": params, "result": cached_contacts(
                     tuple(rows), method, max_seqs, start, end, iters if method == "plm" else 0)}
         except (ValueError, MemoryError) as e:

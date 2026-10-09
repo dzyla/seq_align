@@ -95,3 +95,16 @@ def test_memory_stays_within_cloud_budget(method, L, n, limit_gb):
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=600)
     assert done.returncode == 0, done.stderr[-2000:]
     assert int(done.stdout.strip().splitlines()[-1]) / 1e6 < limit_gb
+
+
+def test_aligned_fasta_and_stockholm_keep_lowercase_residues():
+    assert parse_alignment(">a\nmkvl\n>b\nmrvl\n") == [("a", "MKVL"), ("b", "MRVL")]
+    text = "# STOCKHOLM 1.0\nseqA MKV.L\nseqB mrvaL\n//\n"
+    assert parse_alignment(text) == [("seqA", "MKV-L"), ("seqB", "MRVAL")]
+
+
+def test_plm_dca_robust_with_many_iterations():
+    msa = _coupled_msa(n=300, L=12, i=2, j=9)
+    scores = plm_dca(msa, sequence_weights(msa), iters=100)
+    assert np.isfinite(scores).all()
+    assert top_pairs(scores, min_sep=1, k=1)[0][:2] == (2, 9)
