@@ -26,13 +26,16 @@ ROOTING_OPTIONS = {"Midpoint": "midpoint", "Outgroup": "outgroup", "As built": "
 @st.cache_data(max_entries=16, show_spinner=False)
 def tree_figure_outputs(newick, layout, cladogram, rooting, outgroup, ladderize, n_clades, style_items):
     """Rooted tree, Drawing, 150-dpi preview PNG, SVG, PDF and PNG export dpi for one set of settings (cached)."""
-    from modules.tree_layout import assign_clades, compute_geometry, prepare_tree, recursion_headroom
+    from modules.tree_layout import (assign_clades, compute_geometry, join_node_labels, prepare_tree,
+                                     recursion_headroom, split_node_labels)
     from modules.figures import png_dpi
     from modules.tree_render import TreeStyle, export_bytes, place, quiet_fonts, render_matplotlib
 
     style = TreeStyle(**{k: list(v) if k == "clade_names" else v for k, v in style_items})
     tree = Phylo.read(StringIO(newick), "newick")
     with recursion_headroom(tree):
+        if style.internal_labels:  # names travel as 'name/support' (see phylogenetic_tree_section)
+            split_node_labels(tree)
         tree = prepare_tree(tree, rooting, outgroup, ladderize)
         geometry = compute_geometry(tree, layout, cladogram, assign_clades(tree, n_clades))
         drawing = place(geometry, style)
@@ -41,7 +44,8 @@ def tree_figure_outputs(newick, layout, cladogram, rooting, outgroup, ladderize,
         with quiet_fonts():  # framed exactly like the downloads
             fig.savefig(preview, format="png", dpi=150, facecolor="white", bbox_inches="tight", pad_inches=0.05)
         return {"drawing": drawing, "preview": preview.getvalue(), "svg": export_bytes(fig, "svg"),
-                "pdf": export_bytes(fig, "pdf"), "newick": tree_to_newick(tree), "png_dpi": png_dpi(fig)}
+                "pdf": export_bytes(fig, "pdf"), "png_dpi": png_dpi(fig),
+                "newick": tree_to_newick(join_node_labels(tree) if style.internal_labels else tree)}
 
 
 def _png(drawing):
@@ -49,11 +53,12 @@ def _png(drawing):
     return export_bytes(render_matplotlib(drawing), "png")
 
 
-def phylogenetic_tree_section(tree, key_prefix="tree"):
+def phylogenetic_tree_section(tree, key_prefix="tree", internal_labels=False, highlight=None):
     """Publication tree figure: layout, style, rooting and label settings, a Figure/Explore view and
-    SVG/PDF/PNG/Newick downloads. `key_prefix` keeps settings separate per page."""
+    SVG/PDF/PNG/Newick downloads. `key_prefix` keeps settings separate per page. `internal_labels` draws the
+    internal node names; `highlight` marks one node by name."""
     from dataclasses import asdict
-    from modules.tree_layout import recursion_headroom
+    from modules.tree_layout import join_node_labels, recursion_headroom
     from modules.tree_render import FONTS, STYLES, TreeStyle, render_plotly
     from modules.ui import show_plotly, theme_type
 
@@ -63,7 +68,7 @@ def phylogenetic_tree_section(tree, key_prefix="tree"):
     key = lambda name: f"{key_prefix}_{name}"
     with recursion_headroom(tree):
         leaves = [t.name for t in tree.get_terminals()]
-        newick_in = tree_to_newick(tree)
+        newick_in = tree_to_newick(join_node_labels(tree) if internal_labels else tree)
     with st.container(border=True):
         c1, c2 = st.columns(2)
         layout = c1.segmented_control("Layout", list(LAYOUT_OPTIONS), default="Rectangular", required=True,
@@ -110,7 +115,8 @@ def phylogenetic_tree_section(tree, key_prefix="tree"):
     style = TreeStyle(style=STYLES[style_label], support_min=float(support_min), font_family=font,
                       font_size=float(font_size), italic=italic, underscores_to_spaces=spaces,
                       truncate=int(truncate), line_width=float(line_width), width_cm=float(width_cm),
-                      height_cm=height_cm, clade_names=clade_names)
+                      height_cm=height_cm, clade_names=clade_names, internal_labels=internal_labels,
+                      highlight=highlight)
     style_items = tuple((k, tuple(v) if isinstance(v, list) else v) for k, v in asdict(style).items())
     args = (newick_in, LAYOUT_OPTIONS[layout], cladogram and layout != "Unrooted")
     rooting_mode = "midpoint" if rooting == "Outgroup" and not outgroup else ROOTING_OPTIONS[rooting]

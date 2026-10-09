@@ -348,3 +348,209 @@ def test_dna_msa_motifs_tab_points_to_custom_patterns():
     assert not at.exception
     assert any("built-in motifs are protein motifs" in c.value for c in at.caption)
     assert any("DNA: identity only" in c.value for c in at.caption)
+
+
+def _coupled_a3m(n=300, L=40, seed=0):
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    aa = "ACDEFGHIKLMNPQRSTVWY"
+    msa = rng.integers(0, 20, size=(n, L))
+    pick = np.array([[0, 5], [3, 9], [11, 2], [17, 14]])[rng.integers(0, 4, size=n)]
+    msa[:, 5], msa[:, 30] = pick[:, 0], pick[:, 1]
+    return "".join(f">s{k}\n" + "".join(aa[x] for x in row) + "\n" for k, row in enumerate(msa)).encode()
+
+
+def test_coevolution_page_with_uploaded_alignment():
+    at = AppTest.from_file("app.py", default_timeout=180)
+    at.run()
+    at.button(key="coevo_standalone_btn").click().run()
+    at.session_state["coevo_alignment"] = ("synthetic.a3m", _coupled_a3m())
+    at.run()
+    for method in ("plmDCA (accurate)", "Mean-field DCA (fast)"):
+        next(w for w in at.get("button_group") if w.key == "coevo_method").set_value(method).run()
+        at.button(key="coevo_run").click().run()
+        assert not at.exception, (method, at.exception)
+        assert any(d.label == "Top pairs (CSV)" for d in at.get("download_button"))
+        assert any(m.label == "Neff / L" for m in at.metric)
+
+
+def test_coevolution_long_query_needs_region_and_shallow_alignment_warns():
+    at = AppTest.from_file("app.py", default_timeout=180)
+    at.run()
+    at.button(key="coevo_standalone_btn").click().run()
+    at.session_state["coevo_alignment"] = ("long.a3m", _coupled_a3m(n=40, L=250))
+    at.run()
+    assert any("Choose a region" in w.value for w in at.warning)          # 250 > plmDCA's 200-column limit
+    at.button(key="coevo_run").click().run()
+    assert not at.exception
+    assert any("too few diverse sequences" in e.value for e in at.error)   # 40 random sequences: Neff/L < 1
+
+
+def test_coevolution_result_invalidated_when_alignment_changes():
+    at = AppTest.from_file("app.py", default_timeout=180)
+    at.run()
+    at.button(key="coevo_standalone_btn").click().run()
+    at.session_state["coevo_alignment"] = ("synthetic.a3m", _coupled_a3m(seed=0))
+    at.run()
+    at.button(key="coevo_run").click().run()
+    assert any(m.label == "Neff / L" for m in at.metric)
+    at.session_state["coevo_alignment"] = ("synthetic.a3m", _coupled_a3m(seed=1))
+    at.run()
+    assert any("Settings changed" in i.value for i in at.info)
+    assert not any(m.label == "Neff / L" for m in at.metric)
+
+
+def test_coevolution_clear_alignment_and_query_caption():
+    at = AppTest.from_file("app.py", default_timeout=180)
+    at.run()
+    at.button(key="coevo_standalone_btn").click().run()
+    at.session_state["coevo_alignment"] = ("synthetic.a3m", _coupled_a3m(n=20))
+    at.run()
+    assert any("Using synthetic.a3m: 20 sequences; query s0." in c.value for c in at.caption)
+    at.button(key="coevo_clear").click().run()
+    assert not at.exception and "coevo_alignment" not in at.session_state
+    assert any("Upload a deep alignment" in i.value for i in at.info)
+    at = load(FASTA_A)
+    at.radio(key="analysis_select").set_value("Coevolution").run()
+    assert not at.exception and any(c.value == "Query: a" for c in at.caption)
+
+
+def test_ancestral_page_with_fixture(monkeypatch):
+    from pathlib import Path
+    import modules.ancestral_page as page
+    from modules.ancestral import IQTreeResult, parse_report, parse_state, parse_tree
+    data = Path(__file__).parent / "data" / "asr"
+    alphabet, states = parse_state((data / "globins.state").read_text())
+    model, loglik = parse_report((data / "globins.iqtree").read_text())
+    text = (data / "globins_aln.fasta").read_text().split(">")[1:]
+    rows = [(chunk.splitlines()[0], "".join(chunk.splitlines()[1:])) for chunk in text]
+    result = IQTreeResult(parse_tree((data / "globins.treefile").read_text()), states, alphabet, model, loglik,
+                          "IQ-TREE multicore version 2.0.3", {"iqtree.state": b"x"})
+    monkeypatch.setattr(page, "find_iqtree", lambda: ("/usr/bin/iqtree2", "IQ-TREE 2.0.3"))
+    monkeypatch.setattr(page, "cached_run_iqtree", lambda r, s, m, b: result)
+    import modules.msa as msa_module
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": rows)
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
+    at.button(key="asr_run").click().run()
+    assert not at.exception, at.exception
+    labels = [d.label for d in at.get("download_button")]
+    assert {"ML ancestor (FASTA)", "AltAll (FASTA)", "IQ-TREE files (ZIP)"} <= set(labels)
+    at.radio(key="asr_pick").set_value("From the list of nodes").run()
+    assert not at.exception
+    at.radio(key="asr_rooting").set_value("Outgroup").run()
+    at.multiselect(key="asr_outgroup").set_value([r[0] for r in rows]).run()     # all leaves cannot root
+    assert not at.exception and any("midpoint rooting instead" in w.value for w in at.warning)
+
+
+def test_ancestral_root_spanning_selection_keeps_tree(monkeypatch):
+    from pathlib import Path
+    import modules.ancestral_page as page
+    from modules.ancestral import IQTreeResult, parse_report, parse_state, parse_tree
+    data = Path(__file__).parent / "data" / "asr"
+    alphabet, states = parse_state((data / "globins.state").read_text())
+    model, loglik = parse_report((data / "globins.iqtree").read_text())
+    text = (data / "globins_aln.fasta").read_text().split(">")[1:]
+    rows = [(chunk.splitlines()[0], "".join(chunk.splitlines()[1:])) for chunk in text]
+    result = IQTreeResult(parse_tree((data / "globins.treefile").read_text()), states, alphabet, model, loglik,
+                          "IQ-TREE multicore version 2.0.3", {"iqtree.state": b"x"})
+    monkeypatch.setattr(page, "find_iqtree", lambda: ("/usr/bin/iqtree2", "IQ-TREE 2.0.3"))
+    monkeypatch.setattr(page, "cached_run_iqtree", lambda r, s, m, b: result)
+    import modules.msa as msa_module
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": rows)
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
+    at.button(key="asr_run").click().run()
+    assert not at.exception, at.exception
+    assert not any("root of the displayed tree" in w.value for w in at.warning)     # default: a real ancestor
+    assert len(at.multiselect(key="asr_leaves").value) == 2                         # a two-sequence clade
+    node = next(m.value for m in at.metric if m.label == "Ancestor")
+    assert node in states and any(f"{node} is marked" in c.value for c in at.caption)
+    at.multiselect(key="asr_leaves").set_value(["MYG_HUMAN", "HBA_HUMAN"]).run()
+    assert not at.exception, at.exception
+    assert any("root of the displayed tree" in w.value for w in at.warning)
+    assert any(e.label == "Tree" for e in at.expander)
+    assert any(d.key == "asr_tree_dl_svg" for d in at.get("download_button"))
+    assert not any(m.label == "Ancestor" for m in at.metric)
+
+
+def test_ancestral_page_without_iqtree_and_bad_outgroup(monkeypatch):
+    import modules.ancestral_page as page
+    monkeypatch.setattr(page, "find_iqtree", lambda: None)
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
+    assert not at.exception and any("conda install -c bioconda iqtree" in e.value for e in at.error)
+
+
+def test_ancestral_result_stale_when_sequence_edited(monkeypatch):
+    from pathlib import Path
+    import modules.ancestral_page as page
+    from modules.ancestral import IQTreeResult, parse_report, parse_state, parse_tree
+    data = Path(__file__).parent / "data" / "asr"
+    alphabet, states = parse_state((data / "globins.state").read_text())
+    model, loglik = parse_report((data / "globins.iqtree").read_text())
+    text = (data / "globins_aln.fasta").read_text().split(">")[1:]
+    rows = [(chunk.splitlines()[0], "".join(chunk.splitlines()[1:])) for chunk in text]
+    result = IQTreeResult(parse_tree((data / "globins.treefile").read_text()), states, alphabet, model, loglik,
+                          "IQ-TREE multicore version 2.0.3", {"iqtree.state": b"x"})
+    monkeypatch.setattr(page, "find_iqtree", lambda: ("/usr/bin/iqtree2", "IQ-TREE 2.0.3"))
+    monkeypatch.setattr(page, "cached_run_iqtree", lambda r, s, m, b: result)
+    import modules.msa as msa_module
+    monkeypatch.setattr(msa_module, "cached_run_msa", lambda pairs, seq_type, method="FAMSA": rows)
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    at.selectbox(key="example_choice").select("Globins (protein)").run()
+    at.button(key="load_example").click().run()
+    at.radio(key="analysis_select").set_value("Ancestral Reconstruction").run()
+    at.button(key="asr_run").click().run()
+    assert not at.exception and not any("Settings changed" in i.value for i in at.info)
+    fasta = at.text_area(key="fasta_text").value
+    lines = fasta.split("\n")
+    k = next(i for i, l in enumerate(lines) if l and not l.startswith(">"))
+    lines[k] = ("A" if lines[k][0] != "A" else "G") + lines[k][1:]
+    at.text_area(key="fasta_text").set_value("\n".join(lines)).run()
+    assert not at.exception
+    assert any("Settings changed: press Reconstruct ancestors to update." in i.value for i in at.info)
+
+
+def test_msa_colour_schemes_and_sequence_viewer():
+    at = _load_globins_msa()
+    for scheme in ("ClustalX", "Percent identity", "Conservation", "Similarity to reference", "Zappo"):
+        at.selectbox(key="msa_color_scheme").set_value(scheme).run()
+        assert not at.exception, (scheme, at.exception)
+    next(w for w in at.get("button_group") if w.key == "msa_view_mode").set_value("Sequence viewer").run()
+    assert not at.exception
+    at.number_input(key="msa_view_jump").set_value(60).run()
+    assert not at.exception
+    at.slider(key="msa_view_width").set_value(120).run()
+    assert not at.exception
+
+
+def test_msa_jump_does_not_lock_start_slider():
+    at = _load_globins_msa()
+    next(w for w in at.get("button_group") if w.key == "msa_view_mode").set_value("Sequence viewer").run()
+    at.number_input(key="msa_view_jump").set_value(60).run()
+    jumped = at.slider(key="msa_view_start").value
+    at.slider(key="msa_view_start").set_value(10).run()
+    assert not at.exception
+    assert at.slider(key="msa_view_start").value == 10 and jumped != 10
+
+
+def test_msa_start_column_kept_across_width_changes():
+    at = _load_globins_msa()
+    next(w for w in at.get("button_group") if w.key == "msa_view_mode").set_value("Sequence viewer").run()
+    at.slider(key="msa_view_width").set_value(40).run()
+    at.slider(key="msa_view_start").set_value(70).run()
+    at.slider(key="msa_view_width").set_value(80).run()
+    assert not at.exception and at.slider(key="msa_view_start").value == 70
+    at.slider(key="msa_view_width").set_value(150).run()
+    assert not at.exception and at.slider(key="msa_view_start").value == 70

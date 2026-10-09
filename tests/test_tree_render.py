@@ -273,3 +273,50 @@ def test_render_and_export_emit_no_findfont_warnings(caplog):
         export_bytes(render_matplotlib(drawing), "svg")
         export_bytes(render_matplotlib(drawing), "pdf")
     assert not [r for r in caplog.records if "findfont" in r.getMessage()]
+
+
+NAMED = "((A:0.1,B:0.2)N1/95:0.3,((C:0.2,D:0.1)N2/80:0.2,E:0.3)N3/70:0.2)N0;"
+
+
+def named_geometry(layout):
+    from modules.tree_layout import join_node_labels, split_node_labels
+    t = split_node_labels(Phylo.read(StringIO(NAMED), "newick"))
+    assert {c.name: c.confidence for c in t.get_nonterminals()} == {"N0": None, "N1": 95, "N3": 70, "N2": 80}
+    out = StringIO()
+    Phylo.write(join_node_labels(t), out, "newick")                     # the Newick round trip keeps both
+    again = split_node_labels(Phylo.read(StringIO(out.getvalue()), "newick"))
+    assert {c.name: c.confidence for c in again.get_nonterminals()} == {"N0": None, "N1": 95, "N3": 70, "N2": 80}
+    return compute_geometry(prepare_tree(t, "as_built"), layout)
+
+
+@pytest.mark.parametrize("layout", ["rectangular", "circular", "unrooted"])
+def test_internal_labels_and_highlight(layout):
+    geo = named_geometry(layout)
+    plain = place(geo, TreeStyle())
+    assert not [t for t in plain.texts if t.kind == "node"]               # default output unchanged
+    labelled = place(geo, TreeStyle(internal_labels=True))
+    names = {t.text for t in labelled.texts if t.kind == "node"}
+    assert {"N1", "N2", "N3"} <= names
+    svg = export_bytes(render_matplotlib(labelled), "svg")
+    assert b">N1<" in svg and b">N2<" in svg
+    fig = render_plotly(labelled)
+    assert {"N1", "N2", "N3"} <= {a.text for a in fig.layout.annotations}
+    marked = place(geo, TreeStyle(internal_labels=True, highlight="N2"))
+    extra = [d for d in marked.dots if d not in labelled.dots]
+    assert len(extra) == 1 and "N2" in extra[0][5] and len(marked.dots) == len(labelled.dots) + 1
+    assert place(geo, TreeStyle(highlight="nonexistent")).dots == plain.dots
+
+
+def test_node_labels_do_not_overlap_leaf_or_support_labels():
+    from modules.tree_render import _any_overlap, _corners
+    t = prepare_tree(random_tree(30, 3), "midpoint")
+    for k, clade in enumerate(t.get_nonterminals()):
+        clade.name = f"Node{k + 1}"
+    for layout in ("rectangular", "circular", "unrooted"):
+        d = place(compute_geometry(t, layout), TreeStyle(internal_labels=True))
+        nodes = [x for x in d.texts if x.kind == "node"]
+        others = [x for x in d.texts if x.kind in ("leaf", "support")]
+        assert nodes and not _any_overlap(nodes, others)
+        for x in nodes:
+            corners = _corners(x)                                         # inside the figure
+            assert corners.min() >= 0 and (corners.max(axis=0) <= (d.width, d.height)).all()

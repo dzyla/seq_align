@@ -4,8 +4,10 @@ from io import StringIO
 import streamlit as st
 from Bio import Phylo, SeqIO
 
+from modules.ancestral_page import ancestral_section
 from modules.antibody import antibody_prediction_section
 from modules.best_match import best_match_finder_section
+from modules.coevolution_page import coevolution_section
 from modules.clustering import sequence_clustering_section
 from modules.conversion import format_conversion_section
 from modules.fetch import FETCH_SOURCES, FetchError, fetch_any, parse_id_list
@@ -199,6 +201,9 @@ the **Structure Viewer** (Mol*), and the **Show on structure** panels map mutati
 Pairwise alignments support Global, Local and Overlap (free end gaps) modes. MSA uses FAMSA.
 Mutation positions are always reported in reference-sequence coordinates.
 
+**Coevolution** predicts residue contacts from a deep alignment (upload a ColabFold .a3m); **Ancestral
+Reconstruction** infers ancestors with IQ-TREE.
+
 Quick calculators (restriction maps, codon usage, primers, cloning) live in [Bio-Bench](%s).
 """ % BIO_BENCH_URL
 
@@ -244,6 +249,11 @@ def main():
         return
     if not sequences:
         st.info("Load sequences in the sidebar to begin: paste FASTA, upload a file, fetch by ID or pick an example.")
+        if st.button("Coevolution from an uploaded alignment (A3M / Stockholm / FASTA)", key="coevo_standalone_btn",
+                     icon=":material/hub:"):
+            st.session_state.coevo_standalone = True
+        if st.session_state.get("coevo_standalone"):
+            coevolution_section(None, None, standalone=True)
         _sidebar_footer()
         return
 
@@ -288,6 +298,10 @@ def main():
         sequence_properties_section(sequences)
     elif alignment_mode == "Translate DNA":
         dna_translation_section(sequences)
+    elif alignment_mode == "Coevolution":
+        coevolution_section(sequences, seq_type)
+    elif alignment_mode == "Ancestral Reconstruction":
+        ancestral_section(sequences, seq_type)
     elif alignment_mode == "Convert Formats":
         format_conversion_section(sequences, input_format, seq_type)
     elif alignment_mode == "Structure Viewer":

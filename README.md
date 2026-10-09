@@ -35,6 +35,8 @@ The sequence type (DNA/protein) is detected automatically and can be overridden.
 | Consensus suggestions | Back-to-consensus mutations for any sequence of the MSA, ranked by consensus frequency × conservation, with BLOSUM62, CSV export and 3D view |
 | Motifs & sites | Built-in sites (N-glycosylation sequon, furin, TEV, thrombin, PreScission, Factor Xa, enterokinase, NG/DG, cysteines) plus your own PROSITE pattern or regex; how many sequences carry each site; CSV export and 3D view |
 | UniProt batch | Fetch by ID → UniProt batch: hundreds of accessions or entry names (paste or upload), a UniProt search query (with a size limit), or gene names + organism; preview, tick and load |
+| Coevolution | Residue contacts from a deep MSA (current dataset, or an uploaded ColabFold/HHblits .a3m, Stockholm or aligned FASTA): plmDCA (accurate) or mean-field DCA (fast) with sequence reweighting and APC; Neff/L depth check; contact map, precision against a structure, top pairs (CSV) and links drawn in Mol*. Cloud limits: plmDCA 200 columns / 5,000 sequences, mean-field 400 / 10,000 |
+| Ancestral reconstruction | IQ-TREE maximum-likelihood tree (LG+G4, GTR+G4 or ModelFinder) with marginal ancestral states and per-residue posteriors, indels by Fitch parsimony, ancestor of chosen sequences, uncertain sites with alternatives, ML and AltAll FASTA, comparison with present-day sequences, confidence on a structure. Needs `iqtree` (packages.txt on the cloud; `conda install -c bioconda iqtree` locally) |
 
 Quick bench calculators (restriction maps, codon usage, primers, cloning) live in the companion app
 [Bio-Bench](https://dzyla.github.io/toolbox/).

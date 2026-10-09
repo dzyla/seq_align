@@ -24,7 +24,9 @@ FONTS = {
     "Times New Roman": ("Times New Roman", "Times", "Liberation Serif", "Nimbus Roman", "DejaVu Serif"),
 }
 INK, SUPPORT_GREY, LEADER_GREY = "#1a1a1a", "#6b6b6b", "#b5b5b5"
-NIGHT_COLOURS = {INK: "#ece8df", SUPPORT_GREY: "#a59f91", "white": "#1a1916"}  # Explore view, night theme
+NODE_GREY, HIGHLIGHT = "#4a6a8a", "#d6246e"      # internal node names (muted blue-grey), selected node (accent)
+NIGHT_COLOURS = {INK: "#ece8df", SUPPORT_GREY: "#a59f91", NODE_GREY: "#9db5cf",
+                 "white": "#1a1916"}             # Explore view, night theme
 SUPPORT_OVERLAP = "Support numbers would overlap; support is shown as dots."
 MIN_FONT, LABEL_LIMIT = 5.0, 500
 
@@ -42,6 +44,8 @@ class TreeStyle:
     width_cm: float = 16.0
     height_cm: float | None = None  # None = automatic (rectangular only)
     clade_names: list = field(default_factory=list)
+    internal_labels: bool = False   # draw each named internal node's name next to it
+    highlight: str | None = None    # node name marked with an accent dot
 
 
 @dataclass
@@ -56,7 +60,7 @@ class Text:
     rotation: float = 0.0
     italic: bool = False
     halo: bool = False
-    kind: str = "leaf"              # leaf | support | scale | legend | clade
+    kind: str = "leaf"              # leaf | support | scale | legend | clade | node
     hover: str = ""
     width: float = 0.0              # measured, inches (unrotated)
     height: float = 0.0
@@ -73,6 +77,7 @@ class Drawing:
     family: str = "DejaVu Sans"     # resolved (installed) font, used for measuring
     warning: str | None = None
     font_choice: str = "Arial"      # the requested family, written first in exports (SVG keeps it)
+    node_hover: list = field(default_factory=list)  # (x, y, name) of named internal nodes, for Explore hover
 
 
 def _shift(drawing, dy):
@@ -80,6 +85,7 @@ def _shift(drawing, dy):
     drawing.lines = [(xs, [y + dy for y in ys], *rest) for xs, ys, *rest in drawing.lines]
     drawing.dots = [(x, y + dy, *rest) for x, y, *rest in drawing.dots]
     drawing.fills = [(xs, [y + dy for y in ys], *rest) for xs, ys, *rest in drawing.fills]
+    drawing.node_hover = [(x, y + dy, name) for x, y, name in drawing.node_hover]
     for t in drawing.texts:
         t.y += dy
     drawing.height += dy
@@ -205,6 +211,46 @@ def _add_supports(drawing, marks, style, size, dots, dot_size, measure):
         face = INK if support >= 95 else "#a8a8a8" if support >= 70 else "white"
         drawing.dots.append((x, y, face, INK, dot_size, f"support {support:.0f}"))
     return dots
+
+
+NODE_SPOTS = ((-0.03, -0.03, "right", "top"), (-0.03, 0.025, "right", "bottom"), (0.04, -0.03, "left", "top"),
+              (0.04, 0.03, "left", "bottom"))
+NODE_HIDDEN = "{n} node names would overlap other labels and are hidden (Explore shows them on hover)."
+
+
+def _mark_nodes(drawing, points, style, size, dot_size, measure):
+    """Internal node names and the highlighted node, after leaf labels and support marks. points: (x, y, name,
+    is_leaf) of every node. A name takes the first spot around its node (below-left, above-left, then right)
+    inside the figure that overlaps no leaf, support, clade or other node label; names that fit nowhere are left
+    out with a warning (the highlighted node is placed first, so its name is kept whenever a spot exists)."""
+    if style.internal_labels:
+        named = [(x, y, name) for x, y, name, leaf in points if name and not leaf]
+        named.sort(key=lambda p: p[2] != style.highlight)
+        drawing.node_hover.extend(named)
+        blockers = [t for t in drawing.texts if t.kind in ("leaf", "support", "clade")]
+        label_size, hidden = size * 0.75, 0
+        pad = label_size * 0.08 / 72
+        for x, y, name in named:
+            w, h = measure(name, label_size)
+            colour = HIGHLIGHT if name == style.highlight else NODE_GREY
+            for dx, dy, ha, va in NODE_SPOTS:
+                text = Text(x + dx, y + dy, name, label_size, colour, ha, va, halo=True, kind="node", hover=name,
+                            width=w, height=h)
+                corners = _corners(text)
+                inside = corners.min() >= 0 and (corners.max(axis=0) <= (drawing.width, drawing.height)).all()
+                if inside and not (_any_overlap([text], blockers) or _any_overlap([text], blockers, pad=pad)):
+                    drawing.texts.append(text)
+                    blockers.append(text)
+                    break
+            else:
+                hidden += 1
+        if hidden:
+            drawing.warning = " ".join(filter(None, [drawing.warning, NODE_HIDDEN.format(n=hidden)]))
+    if style.highlight:
+        spot = next(((x, y) for x, y, name, _ in points if name == style.highlight), None)
+        if spot is not None:
+            drawing.dots.append((*spot, HIGHLIGHT, "white", max(dot_size * 1.8, 7.0),
+                                 f"{style.highlight} (selected)"))
 
 
 def _has_supports(geo):
@@ -371,6 +417,7 @@ def _place_rectangular(geo, style, names, measure, show_labels):
                                 kind="clade"))
     dots = _add_supports(d, [(X(nd.a), Y(nd.b), nd.support) for nd in geo.nodes if not nd.is_leaf], style, font,
                          dots, dot_size, measure)
+    _mark_nodes(d, [(X(nd.a), Y(nd.b), nd.name, nd.is_leaf) for nd in geo.nodes], style, font, dot_size, measure)
     bar_end = left
     if geo.has_lengths and not geo.cladogram:
         bar_end = _scale_bar(d, left, 0.3, geo.max_depth / span, font, geo.max_depth)
@@ -435,6 +482,7 @@ def _place_circular(geo, style, names, measure, show_labels):
                                 italic=style.italic, hover=leaf.name, width=w, height=h))
     dots = _add_supports(d, [(*P(R(nd.a), nd.b), nd.support) for nd in geo.nodes if not nd.is_leaf], style, font,
                          style.style != "classic", dot_size, measure)
+    _mark_nodes(d, [(*P(R(nd.a), nd.b), nd.name, nd.is_leaf) for nd in geo.nodes], style, font, dot_size, measure)
     bar_end = 0.2
     if geo.has_lengths and not geo.cladogram:
         bar_end = _scale_bar(d, 0.2, 0.3, geo.max_depth / radius, font, geo.max_depth)
@@ -567,6 +615,8 @@ def _place_unrooted(geo, style, names, measure, show_labels):
                                 italic=style.italic, hover=leaf.name, width=w, height=h))
     dots = _add_supports(d, [(nd.a * scale + ox, nd.b * scale + oy, nd.support) for nd in geo.nodes
                              if not nd.is_leaf], style, font, style.style != "classic", dot_size, measure)
+    _mark_nodes(d, [(nd.a * scale + ox, nd.b * scale + oy, nd.name, nd.is_leaf) for nd in geo.nodes], style, font,
+                dot_size, measure)
     bar_end = 0.2
     if geo.has_lengths:
         bar_end = _scale_bar(d, 0.2, 0.3, 1 / scale, font, extent)
@@ -651,6 +701,11 @@ def render_plotly(drawing, dark=False):
         fig.add_trace(go.Scatter(x=[c[0] for c in centres], y=[c[1] for c in centres], mode="markers",
                                  marker=dict(size=10, opacity=0), text=[t.hover for t in leaves],
                                  hovertemplate="%{text}<extra></extra>", showlegend=False))
+    if drawing.node_hover:  # every named internal node, including names left out of the figure
+        fig.add_trace(go.Scatter(x=[p[0] for p in drawing.node_hover], y=[p[1] for p in drawing.node_hover],
+                                 mode="markers", marker=dict(size=10, opacity=0),
+                                 text=[p[2] for p in drawing.node_hover], hovertemplate="%{text}<extra></extra>",
+                                 showlegend=False))
     annotations = []
     for t in drawing.texts:
         cx, cy = _text_center(t) if t.width else (t.x, t.y)
